@@ -46,8 +46,6 @@ export default function ProfileGate({ onAuth }: Props) {
               />
               <label htmlFor="profile-quez">
                 <div className="avatar u1">Q</div>
-                <span className="name">Quez</span>
-                <span className="role">Card hunter</span>
               </label>
             </div>
             <div className="profile-option">
@@ -61,8 +59,6 @@ export default function ProfileGate({ onAuth }: Props) {
               />
               <label htmlFor="profile-stevie">
                 <div className="avatar u2">S</div>
-                <span className="name">Stevie</span>
-                <span className="role">Grader</span>
               </label>
             </div>
           </div>
