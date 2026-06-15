@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
 type Card = {
   id: number;
@@ -21,12 +22,14 @@ type Card = {
   sale_price?: number;
   date_sold?: string;
   type?: "expense" | "profit";
+  settled_at?: string;
 };
 
 type Props = {
   cards: Card[];
   currentUser: "quez" | "stevie";
   onSettle: () => void;
+  onRefresh: () => void;
 };
 
 function calcTotal(c: Card): number {
@@ -40,10 +43,12 @@ function calcTotal(c: Card): number {
   );
 }
 
-export default function Settle({ cards, currentUser, onSettle }: Props) {
+export default function Settle({ cards, currentUser, onSettle, onRefresh }: Props) {
   const otherUser = currentUser === "quez" ? "stevie" : "quez";
   const currentUserCapitalized = currentUser.charAt(0).toUpperCase() + currentUser.slice(1);
   const otherUserCapitalized = otherUser.charAt(0).toUpperCase() + otherUser.slice(1);
+
+  const [settling, setSettling] = useState(false);
 
   const breakdown = useMemo(() => {
     let currentUserPaid = 0;
@@ -53,7 +58,10 @@ export default function Settle({ cards, currentUser, onSettle }: Props) {
     let totalExpenses = 0;
     let totalProfits = 0;
 
-    for (const c of cards) {
+    // Only calculate for unsettled cards
+    const activeCards = cards.filter((c) => !c.settled_at);
+
+    for (const c of activeCards) {
       const total = calcTotal(c);
       const isProfit = c.type === "profit" || c.sale_price;
 
@@ -119,12 +127,35 @@ export default function Settle({ cards, currentUser, onSettle }: Props) {
       totalExpenses,
       totalProfits,
       fairShareEach,
+      activeCount: activeCards.length,
     };
   }, [cards, currentUser]);
 
-  const handleSettle = () => {
+  const handleSettle = async () => {
+    if (breakdown.activeCount === 0) return;
+
+    setSettling(true);
+
+    // Get IDs of all unsettled cards
+    const activeCardIds = cards.filter((c) => !c.settled_at).map((c) => c.id);
+
+    const { error } = await supabase
+      .from("cards")
+      .update({ settled_at: new Date().toISOString() })
+      .in("id", activeCardIds);
+
+    setSettling(false);
+
+    if (error) {
+      alert("Error settling: " + error.message);
+      return;
+    }
+
     onSettle();
+    onRefresh();
   };
+
+  const allSettled = breakdown.activeCount === 0;
 
   return (
     <div className="page page-narrow">
@@ -141,14 +172,10 @@ export default function Settle({ cards, currentUser, onSettle }: Props) {
         </div>
         <div className="owes">
           {breakdown.owesDirection === "they_owe" && (
-            <>
-              <b>{otherUserCapitalized}</b> owes <b>{currentUserCapitalized}</b>
-            </>
+            <> <b>{otherUserCapitalized}</b> owes <b>{currentUserCapitalized}</b> </>
           )}
           {breakdown.owesDirection === "you_owe" && (
-            <>
-              <b>{currentUserCapitalized}</b> owes <b>{otherUserCapitalized}</b>
-            </>
+            <> <b>{currentUserCapitalized}</b> owes <b>{otherUserCapitalized}</b> </>
           )}
           {breakdown.owesDirection === "even" && <b>All even</b>}
         </div>
@@ -156,6 +183,8 @@ export default function Settle({ cards, currentUser, onSettle }: Props) {
         <div className="owes" style={{ fontSize: 12, color: "var(--text-low)" }}>
           {breakdown.owesDirection === "even"
             ? "You're perfectly balanced"
+            : allSettled
+            ? "Cycle complete — start fresh"
             : "to even out this cycle"}
         </div>
       </div>
@@ -194,8 +223,13 @@ export default function Settle({ cards, currentUser, onSettle }: Props) {
         </div>
       </div>
 
-      <button className="cta" onClick={handleSettle} style={{ width: "100%", margin: "22px 0 10px" }}>
-        Mark as settled
+      <button
+        className="cta"
+        onClick={handleSettle}
+        disabled={settling || allSettled}
+        style={{ width: "100%", margin: "22px 0 10px", opacity: allSettled ? 0.5 : 1 }}
+      >
+        {settling ? "Settling..." : allSettled ? "Cycle settled" : "Mark as settled"}
       </button>
       <button className="cta ghost" style={{ width: "100%", margin: "0 0 22px" }}>
         Send a reminder

@@ -7,6 +7,7 @@ import Activity from "@/components/Activity";
 import Add from "@/components/Add";
 import Settle from "@/components/Settle";
 import ProfileGate from "@/components/ProfileGate";
+import EditModal from "@/components/EditModal";
 
 type Screen = "home" | "activity" | "add" | "settle";
 type Profile = "quez" | "stevie";
@@ -30,6 +31,7 @@ type Card = {
   sale_price?: number;
   date_sold?: string;
   type?: "expense" | "profit";
+  settled_at?: string;
 };
 
 export default function Page() {
@@ -40,6 +42,10 @@ export default function Page() {
   const [activeScreen, setActiveScreen] = useState<Screen>("home");
   const [toastMessage, setToastMessage] = useState("");
   const [toastVisible, setToastVisible] = useState(false);
+  const [editingCard, setEditingCard] = useState<Card | null>(null);
+
+  // Only show active (unsettled) cards
+  const activeCards = cards.filter((c) => !c.settled_at);
 
   const fetchCards = useCallback(async () => {
     const { data, error } = await supabase
@@ -92,8 +98,26 @@ export default function Page() {
     goToScreen("home");
   };
 
+  const handleEditCard = (card: Card) => {
+    setEditingCard(card);
+  };
+
+  const handleEditSave = () => {
+    fetchCards();
+    setEditingCard(null);
+    showToast("✓ Changes saved");
+  };
+
+  const handleEditClose = () => {
+    setEditingCard(null);
+  };
+
   const handleSettle = () => {
-    showToast("✓ Settled — you're even again");
+    showToast("✓ Settled — starting fresh");
+  };
+
+  const handleRefresh = () => {
+    fetchCards();
   };
 
   const showToast = (message: string) => {
@@ -185,7 +209,7 @@ export default function Page() {
             </div>
           </div>
           {!loading ? (
-            <Home cards={cards} currentUser={currentProfile} />
+            <Home cards={activeCards} currentUser={currentProfile} onEdit={handleEditCard} />
           ) : (
             <div className="page" style={{ textAlign: "center", paddingTop: 100 }}>
               <p className="text-gray-500">Loading...</p>
@@ -203,7 +227,7 @@ export default function Page() {
             </div>
           </div>
           {!loading ? (
-            <Activity cards={cards} currentUser={currentProfile} />
+            <Activity cards={activeCards} currentUser={currentProfile} onEdit={handleEditCard} />
           ) : (
             <div className="page page-narrow" style={{ textAlign: "center", paddingTop: 100 }}>
               <p className="text-gray-500">Loading...</p>
@@ -233,7 +257,12 @@ export default function Page() {
             </div>
           </div>
           {!loading ? (
-            <Settle cards={cards} currentUser={currentProfile} onSettle={handleSettle} />
+            <Settle
+              cards={cards}
+              currentUser={currentProfile}
+              onSettle={handleSettle}
+              onRefresh={handleRefresh}
+            />
           ) : (
             <div className="page page-narrow" style={{ textAlign: "center", paddingTop: 100 }}>
               <p className="text-gray-500">Loading...</p>
@@ -290,12 +319,19 @@ export default function Page() {
       </nav>
 
       {/* Toast */}
-      <div
-        className={`settled-toast ${toastVisible ? "show" : ""}`}
-        id="toast"
-      >
+      <div className={`settled-toast ${toastVisible ? "show" : ""}`} id="toast">
         {toastMessage}
       </div>
+
+      {/* Edit Modal */}
+      {editingCard && (
+        <EditModal
+          card={editingCard}
+          currentUser={currentProfile}
+          onClose={handleEditClose}
+          onSave={handleEditSave}
+        />
+      )}
     </div>
   );
 }

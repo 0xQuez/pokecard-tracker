@@ -21,11 +21,13 @@ type Card = {
   sale_price?: number;
   date_sold?: string;
   type?: "expense" | "profit";
+  settled_at?: string;
 };
 
 type Props = {
   cards: Card[];
   currentUser: "quez" | "stevie";
+  onEdit?: (card: Card) => void;
 };
 
 type Filter = "all" | "quez" | "stevie" | "expenses" | "profits";
@@ -58,7 +60,7 @@ function getDayLabel(dateStr: string): string {
   return date.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
 }
 
-export default function Activity({ cards, currentUser }: Props) {
+export default function Activity({ cards, currentUser, onEdit }: Props) {
   const otherUser = currentUser === "quez" ? "stevie" : "quez";
   const currentUserCapitalized = currentUser.charAt(0).toUpperCase() + currentUser.slice(1);
   const otherUserCapitalized = otherUser.charAt(0).toUpperCase() + otherUser.slice(1);
@@ -93,34 +95,17 @@ export default function Activity({ cards, currentUser }: Props) {
   return (
     <div className="page page-narrow">
       <div className="filters" style={{ marginTop: 8 }}>
-        <button
-          className={`chip ${filter === "all" ? "on" : ""}`}
-          onClick={() => setFilter("all")}
-        >
-          All
-        </button>
-        <button
-          className={`chip ${filter === "quez" ? "on" : ""}`}
-          onClick={() => setFilter("quez")}
-        >
+        <button className={`chip ${filter === "all" ? "on" : ""}`} onClick={() => setFilter("all")}>All</button>
+        <button className={`chip ${filter === "quez" ? "on" : ""}`} onClick={() => setFilter("quez")}>
           <span className="dot u1"></span>{currentUserCapitalized}
         </button>
-        <button
-          className={`chip ${filter === "stevie" ? "on" : ""}`}
-          onClick={() => setFilter("stevie")}
-        >
+        <button className={`chip ${filter === "stevie" ? "on" : ""}`} onClick={() => setFilter("stevie")}>
           <span className="dot u2"></span>{otherUserCapitalized}
         </button>
-        <button
-          className={`chip ${filter === "expenses" ? "on" : ""}`}
-          onClick={() => setFilter("expenses")}
-        >
+        <button className={`chip ${filter === "expenses" ? "on" : ""}`} onClick={() => setFilter("expenses")}>
           Expenses
         </button>
-        <button
-          className={`chip ${filter === "profits" ? "on" : ""}`}
-          onClick={() => setFilter("profits")}
-        >
+        <button className={`chip ${filter === "profits" ? "on" : ""}`} onClick={() => setFilter("profits")}>
           Profits
         </button>
       </div>
@@ -140,14 +125,11 @@ export default function Activity({ cards, currentUser }: Props) {
                 const isProfit = card.type === "profit" || card.sale_price;
                 const amount = isProfit ? (card.sale_price || total) : -total;
 
-                // Category icon
                 let catIcon = "🃏";
                 if (card.grading_fee > 0 || card.shipping_to_grader > 0 || card.shipping_from_grader > 0) {
-                  catIcon = "⭐"; // Grading
+                  catIcon = "⭐";
                 }
-                if (isProfit) {
-                  catIcon = "💰"; // Profit
-                }
+                if (isProfit) catIcon = "💰";
 
                 return (
                   <div key={card.id} className="tx">
@@ -169,6 +151,22 @@ export default function Activity({ cards, currentUser }: Props) {
                           : `${(total * (card.split_percent / 100)).toFixed(2)} each`}
                       </div>
                     </div>
+                    {onEdit && (
+                      <button
+                        type="button"
+                        className="edit-btn"
+                        onClick={(e) => { e.stopPropagation(); onEdit(card); }}
+                        style={{
+                          width: 32, height: 32, borderRadius: "50%",
+                          display: "grid", placeItems: "center",
+                          background: "var(--surface-2)", border: "1px solid var(--line)",
+                          color: "var(--text-mid)", fontSize: 14, cursor: "pointer",
+                          flexShrink: 0, marginLeft: 12
+                        }}
+                      >
+                        ✎
+                      </button>
+                    )}
                   </div>
                 );
               })}

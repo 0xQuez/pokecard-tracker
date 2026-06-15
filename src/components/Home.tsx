@@ -22,11 +22,13 @@ type Card = {
   sale_price?: number;
   date_sold?: string;
   type?: "expense" | "profit";
+  settled_at?: string;
 };
 
 type Props = {
   cards: Card[];
   currentUser: "quez" | "stevie";
+  onEdit?: (card: Card) => void;
 };
 
 function calcTotal(c: Card): number {
@@ -64,7 +66,7 @@ function getDayLabel(dateStr: string): string {
   return date.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
 }
 
-export default function Home({ cards, currentUser }: Props) {
+export default function Home({ cards, currentUser, onEdit }: Props) {
   const otherUser = currentUser === "quez" ? "stevie" : "quez";
   const currentUserCapitalized = currentUser.charAt(0).toUpperCase() + currentUser.slice(1);
   const otherUserCapitalized = otherUser.charAt(0).toUpperCase() + otherUser.slice(1);
@@ -85,7 +87,6 @@ export default function Home({ cards, currentUser }: Props) {
       const otherUserShare = total * ((100 - c.split_percent) / 100);
 
       if (c.type === "profit" || c.sale_price) {
-        // Profit entry - split 50/50
         const profit = c.sale_price || total;
         if (c.paid_by === currentUserCapitalized) {
           currentUserPaid += profit;
@@ -99,7 +100,6 @@ export default function Home({ cards, currentUser }: Props) {
         totalProfits += profit;
         if (c.sale_price) totalSold++;
       } else {
-        // Expense entry
         if (c.paid_by === currentUserCapitalized) {
           currentUserPaid += total;
           currentUserFairShare += currentUserShare;
@@ -109,7 +109,6 @@ export default function Home({ cards, currentUser }: Props) {
           otherUserFairShare += otherUserShare;
           currentUserFairShare += currentUserShare;
         } else {
-          // Both - each paid their split share
           currentUserPaid += currentUserShare;
           otherUserPaid += otherUserShare;
         }
@@ -143,7 +142,6 @@ export default function Home({ cards, currentUser }: Props) {
     const totalInvested = totalExpenses;
     const splitAmount = totalInvested / 2;
 
-    // Recent activity - last 5
     const recent = [...cards]
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, 5);
@@ -189,14 +187,10 @@ export default function Home({ cards, currentUser }: Props) {
             <div className="big amount">${breakdown.totalInvested.toFixed(2)}</div>
             <div className="sub">
               {breakdown.owesDirection === "they_owe" && (
-                <>
-                  {otherUserCapitalized} owes you <b>${breakdown.owesAmount.toFixed(2)}</b>
-                </>
+                <> {otherUserCapitalized} owes you <b>${breakdown.owesAmount.toFixed(2)}</b> </>
               )}
               {breakdown.owesDirection === "you_owe" && (
-                <>
-                  You owe {otherUserCapitalized} <b>${breakdown.owesAmount.toFixed(2)}</b>
-                </>
+                <> You owe {otherUserCapitalized} <b>${breakdown.owesAmount.toFixed(2)}</b> </>
               )}
               {breakdown.owesDirection === "even" && <b>All even</b>}
             </div>
@@ -265,14 +259,11 @@ export default function Home({ cards, currentUser }: Props) {
                 ? (card.sale_price || total) / 2
                 : total * (card.split_percent / 100);
 
-              // Category icon
               let catIcon = "🃏";
               if (card.grading_fee > 0 || card.shipping_to_grader > 0 || card.shipping_from_grader > 0) {
-                catIcon = "⭐"; // Grading
+                catIcon = "⭐";
               }
-              if (isProfit) {
-                catIcon = "💰"; // Profit
-              }
+              if (isProfit) catIcon = "💰";
 
               return (
                 <div key={card.id} className="tx">
@@ -290,6 +281,22 @@ export default function Home({ cards, currentUser }: Props) {
                     </div>
                     <div className="half">{halfAmount.toFixed(2)} each</div>
                   </div>
+                  {onEdit && (
+                    <button
+                      type="button"
+                      className="edit-btn"
+                      onClick={(e) => { e.stopPropagation(); onEdit(card); }}
+                      style={{
+                        width: 32, height: 32, borderRadius: "50%",
+                        display: "grid", placeItems: "center",
+                        background: "var(--surface-2)", border: "1px solid var(--line)",
+                        color: "var(--text-mid)", fontSize: 14, cursor: "pointer",
+                        flexShrink: 0, marginLeft: 12
+                      }}
+                    >
+                      ✎
+                    </button>
+                  )}
                 </div>
               );
             })}
