@@ -373,6 +373,10 @@ input {
   color: var(--clay);
 }
 
+.transfer {
+  color: var(--sand);
+}
+
 .chip {
   display: inline-flex;
   align-items: center;

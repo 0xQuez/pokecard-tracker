@@ -21,8 +21,11 @@ type Card = {
   grade_received?: string;
   sale_price?: number;
   date_sold?: string;
-  type?: "expense" | "profit";
+  type?: "expense" | "profit" | "transfer";
   settled_at?: string;
+  transfer_from?: string;
+  transfer_to?: string;
+  transfer_amount?: number;
 };
 
 type Props = {
@@ -33,6 +36,9 @@ type Props = {
 };
 
 function calcTotal(c: Card): number {
+  if (c.type === "transfer") {
+    return c.transfer_amount || 0;
+  }
   return (
     c.purchase_price +
     c.grading_fee +
@@ -63,9 +69,23 @@ export default function Settle({ cards, currentUser, onSettle, onRefresh }: Prop
 
     for (const c of activeCards) {
       const total = calcTotal(c);
+      const isTransfer = c.type === "transfer";
       const isProfit = c.type === "profit" || c.sale_price;
 
-      if (isProfit) {
+      if (isTransfer) {
+        // Transfer: money moved from one person to another
+        if (c.transfer_from === currentUserCapitalized) {
+          // Current user gave money to other user
+          currentUserPaid += total;
+          currentUserFairShare += total;
+          otherUserFairShare += 0;
+        } else if (c.transfer_to === currentUserCapitalized) {
+          // Current user received money from other user
+          otherUserPaid += total;
+          otherUserFairShare += total;
+          currentUserFairShare += 0;
+        }
+      } else if (isProfit) {
         const profit = c.sale_price || total;
         if (c.paid_by === currentUserCapitalized) {
           currentUserPaid += profit;

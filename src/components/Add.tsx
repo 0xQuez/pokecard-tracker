@@ -14,6 +14,7 @@ const CATEGORIES = [
   { key: "shipping", label: "📦 Shipping", icon: "📦" },
   { key: "supplies", label: "📦 Supplies", icon: "📦" },
   { key: "profit", label: "💰 Profit", icon: "💰" },
+  { key: "transfer", label: "💸 Transfer", icon: "💸" },
 ];
 
 export default function Add({ onAdd, currentUser }: Props) {
@@ -25,6 +26,7 @@ export default function Add({ onAdd, currentUser }: Props) {
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("card");
   const [payer, setPayer] = useState<"quez" | "stevie">(currentUser);
+  const [transferDirection, setTransferDirection] = useState<"quez_to_stevie" | "stevie_to_quez">("quez_to_stevie");
   const [saving, setSaving] = useState(false);
   const [isDesktopTyping, setIsDesktopTyping] = useState(false);
   const descInputRef = useRef<HTMLInputElement>(null);
@@ -80,12 +82,13 @@ export default function Add({ onAdd, currentUser }: Props) {
     setSaving(true);
 
     const isProfit = category === "profit";
+    const isTransfer = category === "transfer";
 
     // Build the card object based on category
     const cardData: any = {
       card_name: description.trim(),
       card_id: null,
-      purchase_price: isProfit ? 0 : amountValue,
+      purchase_price: 0,
       grading_fee: 0,
       shipping_to_grader: 0,
       shipping_from_grader: 0,
@@ -93,18 +96,29 @@ export default function Add({ onAdd, currentUser }: Props) {
       other_costs: 0,
       notes: "",
       paid_by: payer === "quez" ? currentUserCapitalized : otherUserCapitalized,
-      split_percent: 50, // Always 50/50 for simplicity
-      type: isProfit ? "profit" : "expense",
+      split_percent: 50,
+      type: isProfit ? "profit" : isTransfer ? "transfer" : "expense",
     };
 
     if (isProfit) {
       cardData.sale_price = amountValue;
       cardData.date_sold = new Date().toISOString().split("T")[0];
+      cardData.purchase_price = 0;
+    } else if (isTransfer) {
+      // Transfer: from_user -> to_user, amount is the transfer amount
+      cardData.transfer_from = transferDirection === "quez_to_stevie" ? "Quez" : "Stevie";
+      cardData.transfer_to = transferDirection === "quez_to_stevie" ? "Stevie" : "Quez";
+      cardData.transfer_amount = amountValue;
     } else if (category === "grading") {
       cardData.grading_fee = amountValue;
+      cardData.purchase_price = 0;
     } else if (category === "shipping") {
       cardData.shipping_to_grader = amountValue / 2;
       cardData.shipping_from_grader = amountValue / 2;
+      cardData.purchase_price = 0;
+    } else {
+      // Regular card purchase
+      cardData.purchase_price = amountValue;
     }
 
     const { data, error } = await supabase.from("cards").insert([cardData]).select();
@@ -121,6 +135,7 @@ export default function Add({ onAdd, currentUser }: Props) {
     setDescription("");
     setCategory("card");
     setPayer(currentUser);
+    setTransferDirection("quez_to_stevie");
 
     onAdd();
   };
@@ -197,6 +212,30 @@ export default function Add({ onAdd, currentUser }: Props) {
               </button>
             </div>
           </div>
+
+          {category === "transfer" && (
+            <div className="field">
+              <label>Direction</label>
+              <div className="payer-toggle" id="transfer-direction-row">
+                <button
+                  type="button"
+                  className={`payer ${transferDirection === "quez_to_stevie" ? "on" : ""}`}
+                  onClick={() => setTransferDirection("quez_to_stevie")}
+                >
+                  <span className="avatar u1">{currentUserCapitalized[0]}</span>
+                  {currentUserCapitalized} → {otherUserCapitalized}
+                </button>
+                <button
+                  type="button"
+                  className={`payer ${transferDirection === "stevie_to_quez" ? "on" : ""}`}
+                  onClick={() => setTransferDirection("stevie_to_quez")}
+                >
+                  <span className="avatar u2">{otherUserCapitalized[0]}</span>
+                  {otherUserCapitalized} → {currentUserCapitalized}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Mobile keypad */}
           <div className="keypad" id="keypad">

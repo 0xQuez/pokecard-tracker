@@ -20,8 +20,11 @@ type Card = {
   grade_received?: string;
   sale_price?: number;
   date_sold?: string;
-  type?: "expense" | "profit";
+  type?: "expense" | "profit" | "transfer";
   settled_at?: string;
+  transfer_from?: string;
+  transfer_to?: string;
+  transfer_amount?: number;
 };
 
 type Props = {
@@ -33,6 +36,9 @@ type Props = {
 type Filter = "all" | "quez" | "stevie" | "expenses" | "profits";
 
 function calcTotal(c: Card): number {
+  if (c.type === "transfer") {
+    return c.transfer_amount || 0;
+  }
   return (
     c.purchase_price +
     c.grading_fee +
@@ -70,9 +76,10 @@ export default function Activity({ cards, currentUser, onEdit }: Props) {
   const filteredCards = useMemo(() => {
     return cards.filter((c) => {
       const isProfit = c.type === "profit" || c.sale_price;
-      if (filter === "quez") return c.paid_by === currentUserCapitalized;
-      if (filter === "stevie") return c.paid_by === otherUserCapitalized;
-      if (filter === "expenses") return !isProfit;
+      const isTransfer = c.type === "transfer";
+      if (filter === "quez") return c.paid_by === currentUserCapitalized || c.transfer_from === currentUserCapitalized || c.transfer_to === currentUserCapitalized;
+      if (filter === "stevie") return c.paid_by === otherUserCapitalized || c.transfer_from === otherUserCapitalized || c.transfer_to === otherUserCapitalized;
+      if (filter === "expenses") return !isProfit && !isTransfer;
       if (filter === "profits") return isProfit;
       return true;
     });
@@ -122,33 +129,46 @@ export default function Activity({ cards, currentUser, onEdit }: Props) {
             <div className="card tx-group">
               {grouped[day].map((card) => {
                 const total = calcTotal(card);
+                const isTransfer = card.type === "transfer";
                 const isProfit = card.type === "profit" || card.sale_price;
-                const amount = isProfit ? (card.sale_price || total) : -total;
+                const amount = isTransfer ? total : isProfit ? (card.sale_price || total) : -total;
 
                 let catIcon = "🃏";
                 if (card.grading_fee > 0 || card.shipping_to_grader > 0 || card.shipping_from_grader > 0) {
                   catIcon = "⭐";
                 }
                 if (isProfit) catIcon = "💰";
+                if (isTransfer) catIcon = "💸";
 
                 return (
                   <div key={card.id} className="tx">
                     <div className="cat">{catIcon}</div>
                     <div className="tx-info">
-                      <div className="t">{card.card_name} {card.card_id ? `#${card.card_id}` : ""}</div>
+                      <div className="t">
+                        {card.card_name} {card.card_id ? `#${card.card_id}` : ""}
+                        {isTransfer && card.transfer_from && card.transfer_to && (
+                          <span style={{ fontWeight: "normal", fontSize: "12px", marginLeft: "8px", color: "var(--text-mid)" }}>
+                            ({card.transfer_from} → {card.transfer_to})
+                          </span>
+                        )}
+                      </div>
                       <div className="s">
-                        <span className={`dot ${card.paid_by === currentUserCapitalized ? "u1" : "u2"}`}></span>
-                        {card.paid_by} paid · {isProfit ? "Profit" : "Expense"}
+                        <span className={`dot ${card.paid_by === currentUserCapitalized || card.transfer_from === currentUserCapitalized ? "u1" : "u2"}`}></span>
+                        {isTransfer && card.transfer_from && card.transfer_to
+                          ? `${card.transfer_from} sent ${card.transfer_to} $${total.toFixed(2)}`
+                          : `${card.paid_by} paid · {isProfit ? "Profit" : "Expense"}`}
                       </div>
                     </div>
                     <div className="tx-amt">
-                      <div className={`a ${isProfit ? "pos" : "neg"}`}>
-                        {isProfit ? "+" : "−"}${(isProfit ? (card.sale_price || total) : total).toFixed(2)}
+                      <div className={`a ${isTransfer ? "transfer" : isProfit ? "pos" : "neg"}`}>
+                        {isTransfer ? "" : isProfit ? "+" : "−"}${(isProfit ? (card.sale_price || total) : total).toFixed(2)}
                       </div>
                       <div className="half">
-                        {isProfit
-                          ? `${((card.sale_price || total) / 2).toFixed(2)} each`
-                          : `${(total * (card.split_percent / 100)).toFixed(2)} each`}
+                        {isTransfer
+                          ? `${total.toFixed(2)} sent`
+                          : isProfit
+                            ? `${((card.sale_price || total) / 2).toFixed(2)} each`
+                            : `${(total * (card.split_percent / 100)).toFixed(2)} each`}
                       </div>
                     </div>
                     {onEdit && (

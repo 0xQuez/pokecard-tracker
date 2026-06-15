@@ -21,8 +21,11 @@ type Card = {
   grade_received?: string;
   sale_price?: number;
   date_sold?: string;
-  type?: "expense" | "profit";
+  type?: "expense" | "profit" | "transfer";
   settled_at?: string;
+  transfer_from?: string;
+  transfer_to?: string;
+  transfer_amount?: number;
 };
 
 type Props = {
