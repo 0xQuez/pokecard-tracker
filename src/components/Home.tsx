@@ -87,24 +87,21 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
     let totalGraded = 0;
     let totalSold = 0;
 
+    // Track transfer adjustments separately
+    let currentUserTransferAdjustment = 0;
+    let otherUserTransferAdjustment = 0;
+
     for (const c of cards) {
       const total = calcTotal(c);
       const isTransfer = c.type === "transfer";
       const isProfit = c.type === "profit" || c.sale_price;
 
       if (isTransfer) {
-        // Transfer: money moved from one person to another
-        // If Quez -> Stevie: Quez gave money, so Quez "paid" more, Stevie "received"
+        // Transfer directly adjusts balance: sender loses, receiver gains
         if (c.transfer_from === currentUserCapitalized) {
-          // Current user gave money to other user
-          currentUserPaid += total;
-          currentUserFairShare += total; // They effectively paid extra
-          otherUserFairShare += 0; // Other user received, so their share is 0
+          currentUserTransferAdjustment -= total;
         } else if (c.transfer_to === currentUserCapitalized) {
-          // Current user received money from other user
-          otherUserPaid += total;
-          otherUserFairShare += total;
-          currentUserFairShare += 0;
+          currentUserTransferAdjustment += total;
         }
       } else if (isProfit) {
         // Profit entry - split 50/50
@@ -145,30 +142,25 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
       }
     }
 
-    const currentUserBalance = currentUserPaid - currentUserFairShare;
-    const otherUserBalance = otherUserPaid - otherUserFairShare;
+    const currentUserBalance = currentUserPaid - currentUserFairShare + currentUserTransferAdjustment;
+    const otherUserBalance = otherUserPaid - otherUserFairShare - currentUserTransferAdjustment; // opposite
 
-    let story = "";
     let owesAmount = 0;
     let owesDirection = ""; // "you_owe" | "they_owe" | "even"
 
     if (currentUserBalance >= 0 && otherUserBalance <= 0) {
       owesAmount = Math.abs(otherUserBalance);
       owesDirection = "they_owe";
-      story = `${otherUserCapitalized} owes ${currentUserCapitalized} $${owesAmount.toFixed(2)}`;
     } else if (otherUserBalance >= 0 && currentUserBalance <= 0) {
       owesAmount = Math.abs(currentUserBalance);
       owesDirection = "you_owe";
-      story = `${currentUserCapitalized} owes ${otherUserCapitalized} $${owesAmount.toFixed(2)}`;
     } else {
       owesDirection = "even";
-      story = "Balanced — no one owes anything";
     }
 
     const totalInvested = totalExpenses;
     const splitAmount = totalInvested / 2;
 
-    // Recent activity - last 5
     const recent = [...cards]
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, 5);
@@ -180,7 +172,7 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
       otherUserFairShare,
       currentUserBalance,
       otherUserBalance,
-      story,
+      currentUserTransferAdjustment,
       owesAmount,
       owesDirection,
       totalInvested,
@@ -293,17 +285,12 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
                   ? (card.sale_price || total) / 2
                   : total * (card.split_percent / 100);
 
-              // Category icon
               let catIcon = "🃏";
               if (card.grading_fee > 0 || card.shipping_to_grader > 0 || card.shipping_from_grader > 0) {
-                catIcon = "⭐"; // Grading
+                catIcon = "⭐";
               }
-              if (isProfit) {
-                catIcon = "💰"; // Profit
-              }
-              if (isTransfer) {
-                catIcon = "💸"; // Transfer
-              }
+              if (isProfit) catIcon = "💰";
+              if (isTransfer) catIcon = "💸";
 
               return (
                 <div key={card.id} className="tx">

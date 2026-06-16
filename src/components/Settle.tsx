@@ -63,6 +63,7 @@ export default function Settle({ cards, currentUser, onSettle, onRefresh }: Prop
     let otherUserFairShare = 0;
     let totalExpenses = 0;
     let totalProfits = 0;
+    let currentUserTransferAdjustment = 0;
 
     // Only calculate for unsettled cards
     const activeCards = cards.filter((c) => !c.settled_at);
@@ -73,17 +74,10 @@ export default function Settle({ cards, currentUser, onSettle, onRefresh }: Prop
       const isProfit = c.type === "profit" || c.sale_price;
 
       if (isTransfer) {
-        // Transfer: money moved from one person to another
         if (c.transfer_from === currentUserCapitalized) {
-          // Current user gave money to other user
-          currentUserPaid += total;
-          currentUserFairShare += total;
-          otherUserFairShare += 0;
+          currentUserTransferAdjustment -= total;
         } else if (c.transfer_to === currentUserCapitalized) {
-          // Current user received money from other user
-          otherUserPaid += total;
-          otherUserFairShare += total;
-          currentUserFairShare += 0;
+          currentUserTransferAdjustment += total;
         }
       } else if (isProfit) {
         const profit = c.sale_price || total;
@@ -117,8 +111,8 @@ export default function Settle({ cards, currentUser, onSettle, onRefresh }: Prop
       }
     }
 
-    const currentUserBalance = currentUserPaid - currentUserFairShare;
-    const otherUserBalance = otherUserPaid - otherUserFairShare;
+    const currentUserBalance = currentUserPaid - currentUserFairShare + currentUserTransferAdjustment;
+    const otherUserBalance = otherUserPaid - otherUserFairShare - currentUserTransferAdjustment;
 
     let owesAmount = 0;
     let owesDirection = ""; // "you_owe" | "they_owe" | "even"
@@ -148,6 +142,7 @@ export default function Settle({ cards, currentUser, onSettle, onRefresh }: Prop
       totalProfits,
       fairShareEach,
       activeCount: activeCards.length,
+      currentUserTransferAdjustment,
     };
   }, [cards, currentUser]);
 
@@ -231,6 +226,17 @@ export default function Settle({ cards, currentUser, onSettle, onRefresh }: Prop
           <span className="l">Fair share each (½)</span>
           <span className="r amount">${breakdown.fairShareEach.toFixed(2)}</span>
         </div>
+        {breakdown.currentUserTransferAdjustment !== 0 && (
+          <div className="break-row" style={{ color: "var(--sand)" }}>
+            <span className="l">
+              <span className="dot u2"></span>
+              Transfers adjustment
+            </span>
+            <span className="r amount">
+              {breakdown.currentUserTransferAdjustment > 0 ? "+" : ""}${breakdown.currentUserTransferAdjustment.toFixed(2)}
+            </span>
+          </div>
+        )}
         <div className="break-row total">
           <span className="l">
             {breakdown.owesDirection === "they_owe" && `${otherUserCapitalized} pays ${currentUserCapitalized}`}
