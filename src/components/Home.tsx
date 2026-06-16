@@ -90,10 +90,13 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
     let otherUserExpensesPaid = 0;
     let currentUserProfitsReceived = 0;
     let otherUserProfitsReceived = 0;
+    let currentUserTransfersGiven = 0;   // cash sent TO other person
+    let currentUserTransfersReceived = 0; // cash received FROM other person
+    let otherUserTransfersGiven = 0;
+    let otherUserTransfersReceived = 0;
 
-    // Track transfer adjustments separately
+    // Track transfer adjustments (100% to sender/receiver, not split)
     let currentUserTransferAdjustment = 0;
-    let otherUserTransferAdjustment = 0;
 
     for (const c of cards) {
       const total = calcTotal(c);
@@ -101,14 +104,19 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
       const isProfit = c.type === "profit" || c.sale_price;
 
       if (isTransfer) {
-        // Transfer directly adjusts balance: sender loses, receiver gains
+        // Transfer: 100% attributed to sender/receiver, NOT split
         if (c.transfer_from === currentUserCapitalized) {
+          // Current user SENT money to other user
           currentUserTransferAdjustment -= total;
+          currentUserTransfersGiven += total;
+          otherUserTransfersReceived += total;
         } else if (c.transfer_to === currentUserCapitalized) {
+          // Current user RECEIVED money from other user
           currentUserTransferAdjustment += total;
+          currentUserTransfersReceived += total;
+          otherUserTransfersGiven += total;
         }
-      }
-      if (c.type === "profit" || c.sale_price) {
+      } else if (isProfit) {
         // Profit entry - split 50/50
         const profit = c.sale_price || total;
         if (c.paid_by === currentUserCapitalized) {
@@ -125,7 +133,7 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
         totalProfits += profit;
         if (c.sale_price) totalSold++;
       } else {
-        // Expense entry
+        // Expense entry - split by percentage
         const currentUserShare = total * (c.split_percent / 100);
         const otherUserShare = total * ((100 - c.split_percent) / 100);
 
@@ -154,7 +162,7 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
     }
 
     const currentUserBalance = currentUserPaid - currentUserFairShare + currentUserTransferAdjustment;
-    const otherUserBalance = otherUserPaid - otherUserFairShare - currentUserTransferAdjustment; // opposite
+    const otherUserBalance = otherUserPaid - otherUserFairShare - currentUserTransferAdjustment;
 
     let owesAmount = 0;
     let owesDirection = ""; // "you_owe" | "they_owe" | "even"
@@ -196,6 +204,10 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
       otherUserExpensesPaid,
       currentUserProfitsReceived,
       otherUserProfitsReceived,
+      currentUserTransfersGiven,
+      currentUserTransfersReceived,
+      otherUserTransfersGiven,
+      otherUserTransfersReceived,
       recent,
     };
   }, [cards, currentUser]);
@@ -276,6 +288,16 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
                   +${breakdown.currentUserProfitsReceived.toFixed(2)} profits received
                 </div>
               )}
+              {(breakdown.currentUserTransfersGiven > 0 || breakdown.currentUserTransfersReceived > 0) && (
+                <div style={{ marginTop: "8px", fontSize: "13px", color: "var(--text-mid)" }}>
+                  {breakdown.currentUserTransfersGiven > 0 && (
+                    <div className="neg">Sent: ${breakdown.currentUserTransfersGiven.toFixed(2)}</div>
+                  )}
+                  {breakdown.currentUserTransfersReceived > 0 && (
+                    <div className="pos">Received: ${breakdown.currentUserTransfersReceived.toFixed(2)}</div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="card partner">
               <div className="who">
@@ -287,6 +309,16 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
               {breakdown.otherUserProfitsReceived > 0 && (
                 <div className="spent amount pos" style={{ fontSize: "16px", marginTop: "4px" }}>
                   +${breakdown.otherUserProfitsReceived.toFixed(2)} profits received
+                </div>
+              )}
+              {(breakdown.otherUserTransfersGiven > 0 || breakdown.otherUserTransfersReceived > 0) && (
+                <div style={{ marginTop: "8px", fontSize: "13px", color: "var(--text-mid)" }}>
+                  {breakdown.otherUserTransfersGiven > 0 && (
+                    <div className="neg">Sent: ${breakdown.otherUserTransfersGiven.toFixed(2)}</div>
+                  )}
+                  {breakdown.otherUserTransfersReceived > 0 && (
+                    <div className="pos">Received: ${breakdown.otherUserTransfersReceived.toFixed(2)}</div>
+                  )}
                 </div>
               )}
             </div>

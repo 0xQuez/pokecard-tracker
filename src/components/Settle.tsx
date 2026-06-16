@@ -74,6 +74,7 @@ export default function Settle({ cards, currentUser, onSettle, onRefresh }: Prop
       const isProfit = c.type === "profit" || c.sale_price;
 
       if (isTransfer) {
+        // Transfer: 100% attributed to sender/receiver, NOT split
         if (c.transfer_from === currentUserCapitalized) {
           currentUserTransferAdjustment -= total;
         } else if (c.transfer_to === currentUserCapitalized) {
@@ -151,7 +152,6 @@ export default function Settle({ cards, currentUser, onSettle, onRefresh }: Prop
 
     setSettling(true);
 
-    // Get IDs of all unsettled cards
     const activeCardIds = cards.filter((c) => !c.settled_at).map((c) => c.id);
 
     const { error } = await supabase
@@ -230,7 +230,7 @@ export default function Settle({ cards, currentUser, onSettle, onRefresh }: Prop
           <div className="break-row" style={{ color: "var(--sand)" }}>
             <span className="l">
               <span className="dot u2"></span>
-              Transfers adjustment
+              Transfers (100% attributed)
             </span>
             <span className="r amount">
               {breakdown.currentUserTransferAdjustment > 0 ? "+" : ""}${breakdown.currentUserTransferAdjustment.toFixed(2)}
