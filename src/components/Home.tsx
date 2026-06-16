@@ -86,6 +86,10 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
     let totalProfits = 0;
     let totalGraded = 0;
     let totalSold = 0;
+    let currentUserExpensesPaid = 0;
+    let otherUserExpensesPaid = 0;
+    let currentUserProfitsReceived = 0;
+    let otherUserProfitsReceived = 0;
 
     // Track transfer adjustments separately
     let currentUserTransferAdjustment = 0;
@@ -103,17 +107,20 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
         } else if (c.transfer_to === currentUserCapitalized) {
           currentUserTransferAdjustment += total;
         }
-      } else if (isProfit) {
+      }
+      if (c.type === "profit" || c.sale_price) {
         // Profit entry - split 50/50
         const profit = c.sale_price || total;
         if (c.paid_by === currentUserCapitalized) {
           currentUserPaid += profit;
           currentUserFairShare += profit / 2;
           otherUserFairShare += profit / 2;
+          currentUserProfitsReceived += profit;
         } else {
           otherUserPaid += profit;
           otherUserFairShare += profit / 2;
           currentUserFairShare += profit / 2;
+          otherUserProfitsReceived += profit;
         }
         totalProfits += profit;
         if (c.sale_price) totalSold++;
@@ -126,14 +133,18 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
           currentUserPaid += total;
           currentUserFairShare += currentUserShare;
           otherUserFairShare += otherUserShare;
+          currentUserExpensesPaid += total;
         } else if (c.paid_by === otherUserCapitalized) {
           otherUserPaid += total;
           otherUserFairShare += otherUserShare;
           currentUserFairShare += currentUserShare;
+          otherUserExpensesPaid += total;
         } else {
           // Both - each paid their split share
           currentUserPaid += currentUserShare;
           otherUserPaid += otherUserShare;
+          currentUserExpensesPaid += currentUserShare;
+          otherUserExpensesPaid += otherUserShare;
         }
         totalExpenses += total;
         if (c.grading_fee > 0 || c.shipping_to_grader > 0 || c.shipping_from_grader > 0 || c.insurance > 0) {
@@ -181,6 +192,10 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
       totalGraded,
       totalSold,
       splitAmount,
+      currentUserExpensesPaid,
+      otherUserExpensesPaid,
+      currentUserProfitsReceived,
+      otherUserProfitsReceived,
       recent,
     };
   }, [cards, currentUser]);
@@ -252,18 +267,28 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
             <div className="card partner">
               <div className="who">
                 <div className="avatar u1">{currentUserCapitalized[0]}</div>
-                {currentUserCapitalized} paid
+                {currentUserCapitalized} expenses
               </div>
-              <div className="spent amount">${breakdown.currentUserPaid.toFixed(2)}</div>
-              <div className="note">Your contributions</div>
+              <div className="spent amount neg">${breakdown.currentUserExpensesPaid.toFixed(2)}</div>
+              <div className="note">Expenses you paid for</div>
+              {breakdown.currentUserProfitsReceived > 0 && (
+                <div className="spent amount pos" style={{ fontSize: "16px", marginTop: "4px" }}>
+                  +${breakdown.currentUserProfitsReceived.toFixed(2)} profits received
+                </div>
+              )}
             </div>
             <div className="card partner">
               <div className="who">
                 <div className="avatar u2">{otherUserCapitalized[0]}</div>
-                {otherUserCapitalized} paid
+                {otherUserCapitalized} expenses
               </div>
-              <div className="spent amount">${breakdown.otherUserPaid.toFixed(2)}</div>
-              <div className="note">Their contributions</div>
+              <div className="spent amount neg">${breakdown.otherUserExpensesPaid.toFixed(2)}</div>
+              <div className="note">Expenses they paid for</div>
+              {breakdown.otherUserProfitsReceived > 0 && (
+                <div className="spent amount pos" style={{ fontSize: "16px", marginTop: "4px" }}>
+                  +${breakdown.otherUserProfitsReceived.toFixed(2)} profits received
+                </div>
+              )}
             </div>
           </div>
         </div>
