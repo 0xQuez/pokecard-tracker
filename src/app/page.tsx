@@ -115,6 +115,12 @@ export default function Page() {
     setEditingCard(null);
   };
 
+  const handleEditDelete = () => {
+    fetchCards();
+    setEditingCard(null);
+    showToast("✓ Entry deleted");
+  };
+
   const handleSettle = () => {
     showToast("✓ Settled — starting fresh");
   };
@@ -333,6 +339,7 @@ export default function Page() {
           currentUser={currentProfile}
           onClose={handleEditClose}
           onSave={handleEditSave}
+          onDelete={handleEditDelete}
         />
       )}
     </div>

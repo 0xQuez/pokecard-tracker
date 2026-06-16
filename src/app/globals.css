@@ -859,6 +859,20 @@ input {
   box-shadow: none;
 }
 
+.cta.danger {
+  background: var(--clay);
+  color: var(--text-hi);
+  box-shadow: 0 10px 28px -10px rgba(214, 162, 133, .4);
+}
+
+.cta.danger:hover {
+  box-shadow: 0 14px 32px -10px rgba(214, 162, 133, .5);
+}
+
+.cta.danger:active {
+  transform: scale(.98);
+}
+
 /* ============ SETTLE ============ */
 .settle-hero {
   padding: 34px 24px;

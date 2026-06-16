@@ -31,6 +31,7 @@ type Card = {
 type Props = {
   onClose: () => void;
   onSave: () => void;
+  onDelete: () => void;
   card: Card | null;
   currentUser: "quez" | "stevie";
 };
@@ -41,9 +42,13 @@ const CATEGORIES = [
   { key: "shipping", label: "📦 Shipping", icon: "📦" },
   { key: "supplies", label: "📦 Supplies", icon: "📦" },
   { key: "profit", label: "💰 Profit", icon: "💰" },
+  { key: "transfer", label: "💸 Transfer", icon: "💸" },
 ];
 
 function calcTotal(c: Card): number {
+  if (c.type === "transfer") {
+    return c.transfer_amount || 0;
+  }
   return (
     c.purchase_price +
     c.grading_fee +
@@ -54,7 +59,7 @@ function calcTotal(c: Card): number {
   );
 }
 
-export default function EditModal({ onClose, onSave, card, currentUser }: Props) {
+export default function EditModal({ onClose, onSave, onDelete, card, currentUser }: Props) {
   const otherUser = currentUser === "quez" ? "stevie" : "quez";
   const currentUserCapitalized = currentUser.charAt(0).toUpperCase() + currentUser.slice(1);
   const otherUserCapitalized = otherUser.charAt(0).toUpperCase() + otherUser.slice(1);
@@ -63,18 +68,31 @@ export default function EditModal({ onClose, onSave, card, currentUser }: Props)
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("card");
   const [payer, setPayer] = useState<"quez" | "stevie">(currentUser);
+  const [transferDirection, setTransferDirection] = useState<"quez_to_stevie" | "stevie_to_quez">("quez_to_stevie");
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const descInputRef = useRef<HTMLInputElement>(null);
+
+  const isTransfer = category === "transfer";
+  const isProfit = category === "profit";
 
   // Initialize form with card data
   useEffect(() => {
     if (card) {
       const total = calcTotal(card);
-      const isProfit = card.type === "profit" || card.sale_price;
+      const isProfitCard = card.type === "profit" || card.sale_price;
+      const isTransferCard = card.type === "transfer";
 
-      setRawAmount(isProfit ? (card.sale_price || total).toString() : total.toString());
+      setRawAmount(isProfitCard ? (card.sale_price || total).toString() : total.toString());
       setDescription(card.card_name);
-      setCategory(isProfit ? "profit" : "card");
+      if (isProfitCard) {
+        setCategory("profit");
+      } else if (isTransferCard) {
+        setCategory("transfer");
+        setTransferDirection(card.transfer_from === currentUserCapitalized ? "quez_to_stevie" : "stevie_to_quez");
+      } else {
+        setCategory("card");
+      }
       setPayer(card.paid_by === currentUserCapitalized ? "quez" : "stevie");
     }
   }, [card, currentUser]);
@@ -120,12 +138,10 @@ export default function EditModal({ onClose, onSave, card, currentUser }: Props)
 
     setSaving(true);
 
-    const isProfit = category === "profit";
-
     const cardData: any = {
       card_name: description.trim(),
       card_id: card.card_id,
-      purchase_price: isProfit ? 0 : amountValue,
+      purchase_price: 0,
       grading_fee: 0,
       shipping_to_grader: 0,
       shipping_from_grader: 0,
@@ -134,7 +150,7 @@ export default function EditModal({ onClose, onSave, card, currentUser }: Props)
       notes: card.notes,
       paid_by: payer === "quez" ? currentUserCapitalized : otherUserCapitalized,
       split_percent: card.split_percent,
-      type: isProfit ? "profit" : "expense",
+      type: isProfit ? "profit" : isTransfer ? "transfer" : "expense",
       sale_price: card.sale_price,
       date_sold: card.date_sold,
       date_acquired: card.date_acquired,
@@ -144,11 +160,17 @@ export default function EditModal({ onClose, onSave, card, currentUser }: Props)
     if (isProfit) {
       cardData.sale_price = amountValue;
       cardData.date_sold = card.date_sold || new Date().toISOString().split("T")[0];
+    } else if (isTransfer) {
+      cardData.transfer_from = transferDirection === "quez_to_stevie" ? "Quez" : "Stevie";
+      cardData.transfer_to = transferDirection === "quez_to_stevie" ? "Stevie" : "Quez";
+      cardData.transfer_amount = amountValue;
     } else if (category === "grading") {
       cardData.grading_fee = amountValue;
     } else if (category === "shipping") {
       cardData.shipping_to_grader = amountValue / 2;
       cardData.shipping_from_grader = amountValue / 2;
+    } else {
+      cardData.purchase_price = amountValue;
     }
 
     const { error } = await supabase.from("cards").update(cardData).eq("id", card.id);
@@ -161,6 +183,25 @@ export default function EditModal({ onClose, onSave, card, currentUser }: Props)
     }
 
     onSave();
+    onClose();
+  };
+
+  const handleDelete = async () => {
+    if (!card) return;
+    if (!window.confirm("Delete this entry?")) return;
+
+    setDeleting(true);
+
+    const { error } = await supabase.from("cards").delete().eq("id", card.id);
+
+    setDeleting(false);
+
+    if (error) {
+      alert("Error deleting: " + error.message);
+      return;
+    }
+
+    onDelete();
     onClose();
   };
 
@@ -193,7 +234,7 @@ export default function EditModal({ onClose, onSave, card, currentUser }: Props)
               id="edit-desc"
               className="text-input"
               type="text"
-              placeholder={category === "profit" ? "e.g. Charizard Base Set sale" : "e.g. Charizard Base Set purchase"}
+              placeholder={category === "profit" ? "e.g. Charizard Base Set sale" : category === "transfer" ? "e.g. Settlement cash" : "e.g. Charizard Base Set purchase"}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               required
@@ -216,27 +257,53 @@ export default function EditModal({ onClose, onSave, card, currentUser }: Props)
             </div>
           </div>
 
-          <div className="field">
-            <label>Who paid?</label>
-            <div className="payer-toggle">
-              <button
-                type="button"
-                className={`payer ${payer === "quez" ? "on" : ""}`}
-                onClick={() => setPayer("quez")}
-              >
-                <span className="avatar u1">{currentUserCapitalized[0]}</span>
-                {currentUserCapitalized}
-              </button>
-              <button
-                type="button"
-                className={`payer ${payer === "stevie" ? "on" : ""}`}
-                onClick={() => setPayer("stevie")}
-              >
-                <span className="avatar u2">{otherUserCapitalized[0]}</span>
-                {otherUserCapitalized}
-              </button>
+          {!isTransfer && (
+            <div className="field">
+              <label>Who paid?</label>
+              <div className="payer-toggle">
+                <button
+                  type="button"
+                  className={`payer ${payer === "quez" ? "on" : ""}`}
+                  onClick={() => setPayer("quez")}
+                >
+                  <span className="avatar u1">{currentUserCapitalized[0]}</span>
+                  {currentUserCapitalized}
+                </button>
+                <button
+                  type="button"
+                  className={`payer ${payer === "stevie" ? "on" : ""}`}
+                  onClick={() => setPayer("stevie")}
+                >
+                  <span className="avatar u2">{otherUserCapitalized[0]}</span>
+                  {otherUserCapitalized}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
+
+          {isTransfer && (
+            <div className="field">
+              <label>Direction</label>
+              <div className="payer-toggle" id="transfer-direction-row">
+                <button
+                  type="button"
+                  className={`payer ${transferDirection === "quez_to_stevie" ? "on" : ""}`}
+                  onClick={() => setTransferDirection("quez_to_stevie")}
+                >
+                  <span className="avatar u1">{currentUserCapitalized[0]}</span>
+                  {currentUserCapitalized} → {otherUserCapitalized}
+                </button>
+                <button
+                  type="button"
+                  className={`payer ${transferDirection === "stevie_to_quez" ? "on" : ""}`}
+                  onClick={() => setTransferDirection("stevie_to_quez")}
+                >
+                  <span className="avatar u2">{otherUserCapitalized[0]}</span>
+                  {otherUserCapitalized} → {currentUserCapitalized}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="keypad">
             <button type="button" className="key" onClick={() => pressKey("1")}>1</button>
@@ -254,10 +321,13 @@ export default function EditModal({ onClose, onSave, card, currentUser }: Props)
           </div>
 
           <div className="modal-actions">
-            <button type="button" className="cta ghost" onClick={onClose} disabled={saving}>
+            <button type="button" className="cta danger" onClick={handleDelete} disabled={deleting || saving}>
+              {deleting ? "Deleting..." : "Delete"}
+            </button>
+            <button type="button" className="cta ghost" onClick={onClose} disabled={saving || deleting}>
               Cancel
             </button>
-            <button type="submit" className="cta" disabled={saving || !amountValue || !description.trim()}>
+            <button type="submit" className="cta" disabled={saving || deleting || !amountValue || !description.trim()}>
               {saving ? "Saving..." : "Save changes"}
             </button>
           </div>

@@ -28,6 +28,9 @@ export default function Add({ onAdd, currentUser }: Props) {
   const [payer, setPayer] = useState<"quez" | "stevie">(currentUser);
   const [transferDirection, setTransferDirection] = useState<"quez_to_stevie" | "stevie_to_quez">("quez_to_stevie");
   const [saving, setSaving] = useState(false);
+
+  const isTransfer = category === "transfer";
+  const isProfit = category === "profit";
   const [isDesktopTyping, setIsDesktopTyping] = useState(false);
   const descInputRef = useRef<HTMLInputElement>(null);
 
@@ -80,9 +83,6 @@ export default function Add({ onAdd, currentUser }: Props) {
     if (!description.trim()) return;
 
     setSaving(true);
-
-    const isProfit = category === "profit";
-    const isTransfer = category === "transfer";
 
     // Build the card object based on category
     const cardData: any = {
@@ -191,29 +191,31 @@ export default function Add({ onAdd, currentUser }: Props) {
             </div>
           </div>
 
-          <div className="field">
-            <label>Who paid?</label>
-            <div className="payer-toggle" id="payer-row">
-              <button
-                type="button"
-                className={`payer ${payer === "quez" ? "on" : ""}`}
-                onClick={() => setPayer("quez")}
-              >
-                <span className="avatar u1">{currentUserCapitalized[0]}</span>
-                {currentUserCapitalized}
-              </button>
-              <button
-                type="button"
-                className={`payer ${payer === "stevie" ? "on" : ""}`}
-                onClick={() => setPayer("stevie")}
-              >
-                <span className="avatar u2">{otherUserCapitalized[0]}</span>
-                {otherUserCapitalized}
-              </button>
+          {!isTransfer && (
+            <div className="field">
+              <label>Who paid?</label>
+              <div className="payer-toggle" id="payer-row">
+                <button
+                  type="button"
+                  className={`payer ${payer === "quez" ? "on" : ""}`}
+                  onClick={() => setPayer("quez")}
+                >
+                  <span className="avatar u1">{currentUserCapitalized[0]}</span>
+                  {currentUserCapitalized}
+                </button>
+                <button
+                  type="button"
+                  className={`payer ${payer === "stevie" ? "on" : ""}`}
+                  onClick={() => setPayer("stevie")}
+                >
+                  <span className="avatar u2">{otherUserCapitalized[0]}</span>
+                  {otherUserCapitalized}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
-          {category === "transfer" && (
+          {isTransfer && (
             <div className="field">
               <label>Direction</label>
               <div className="payer-toggle" id="transfer-direction-row">
