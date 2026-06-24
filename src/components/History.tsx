@@ -248,14 +248,14 @@ export default function History({ cards, currentUser }: Props) {
               )}
               <div className="break-row total">
                 <span className="l">
-                  {stats.quezBalance < 0
+                  {stats.quezBalance > 0
                     ? `${otherUserCapitalized} owed ${currentUserCapitalized}`
-                    : stats.stevieBalance < 0
+                    : stats.stevieBalance > 0
                     ? `${currentUserCapitalized} owed ${otherUserCapitalized}`
                     : "All even"}
                 </span>
                 <span className="r amount">
-                  {Math.abs(Math.min(stats.quezBalance, stats.stevieBalance)).toFixed(2)}
+                  {Math.abs(Math.max(stats.quezBalance, stats.stevieBalance)).toFixed(2)}
                 </span>
               </div>
             </div>
