@@ -13,7 +13,7 @@ const CATEGORIES = [
   { key: "grading", label: "⭐ Grading", icon: "⭐" },
   { key: "shipping", label: "📦 Shipping", icon: "📦" },
   { key: "supplies", label: "📦 Supplies", icon: "📦" },
-  { key: "profit", label: "💰 Profit", icon: "💰" },
+  { key: "sale", label: "💰 Sale", icon: "💰" },
   { key: "transfer", label: "💸 Transfer", icon: "💸" },
 ];
 
@@ -27,29 +27,26 @@ export default function Add({ onAdd, currentUser }: Props) {
   const [category, setCategory] = useState("card");
   const [payer, setPayer] = useState<"quez" | "stevie">(currentUser);
   const [transferDirection, setTransferDirection] = useState<"quez_to_stevie" | "stevie_to_quez">("quez_to_stevie");
+  const [saleSplit, setSaleSplit] = useState(false);
   const [saving, setSaving] = useState(false);
-
-  const isTransfer = category === "transfer";
-  const isProfit = category === "profit";
   const [isDesktopTyping, setIsDesktopTyping] = useState(false);
   const descInputRef = useRef<HTMLInputElement>(null);
+
+  const isTransfer = category === "transfer";
+  const isSale = category === "sale";
 
   const amountValue = rawAmount ? parseFloat(rawAmount) : 0;
   const halfAmount = amountValue / 2;
   const formattedAmount = rawAmount || "0.00";
   const formattedHalf = halfAmount.toFixed(2);
 
-  // Handle keypad press
   const pressKey = (key: string) => {
     setRawAmount((prev) => {
-      if (key === "del") {
-        return prev.slice(0, -1);
-      }
+      if (key === "del") return prev.slice(0, -1);
       if (key === ".") {
         if (!prev.includes(".")) return prev ? prev + "." : "0.";
         return prev;
       }
-      // Limit to 7 digits + decimal
       const digitsOnly = prev.replace(".", "");
       if (digitsOnly.length >= 7) return prev;
       if (prev === "0" && key !== ".") return key;
@@ -57,12 +54,9 @@ export default function Add({ onAdd, currentUser }: Props) {
     });
   };
 
-  // Desktop keyboard support
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't intercept if typing in description input
       if (document.activeElement === descInputRef.current) return;
-
       if (/^[0-9.]$/.test(e.key)) {
         e.preventDefault();
         pressKey(e.key);
@@ -76,6 +70,10 @@ export default function Add({ onAdd, currentUser }: Props) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  useEffect(() => {
+    setIsDesktopTyping(rawAmount.length > 0);
+  }, [rawAmount]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -84,7 +82,6 @@ export default function Add({ onAdd, currentUser }: Props) {
 
     setSaving(true);
 
-    // Build the card object based on category
     const cardData: any = {
       card_name: description.trim(),
       card_id: null,
@@ -95,33 +92,36 @@ export default function Add({ onAdd, currentUser }: Props) {
       insurance: 0,
       other_costs: 0,
       notes: "",
-      paid_by: payer === "quez" ? currentUserCapitalized : otherUserCapitalized,
-      split_percent: 50,
-      type: isProfit ? "profit" : isTransfer ? "transfer" : "expense",
+      paid_by: currentUserCapitalized,
+      split_percent: 100,
+      type: isTransfer ? "transfer" : isSale ? "profit" : "expense",
+      sale_price: isSale ? amountValue : null,
+      date_sold: isSale ? new Date().toISOString().split("T")[0] : null,
+      date_acquired: null,
+      grade_received: null,
     };
 
-    if (isProfit) {
-      cardData.sale_price = amountValue;
-      cardData.date_sold = new Date().toISOString().split("T")[0];
-      cardData.purchase_price = 0;
-    } else if (isTransfer) {
-      // Transfer: from_user -> to_user, amount is the transfer amount
+    if (isTransfer) {
       cardData.transfer_from = transferDirection === "quez_to_stevie" ? "Quez" : "Stevie";
       cardData.transfer_to = transferDirection === "quez_to_stevie" ? "Stevie" : "Quez";
       cardData.transfer_amount = amountValue;
+    } else if (isSale) {
+      // For sales, "paid_by" actually means "who collected"
+      if (saleSplit) {
+        // Cash was split 50/50 — mark as both collected
+        cardData.paid_by = "Both";
+      }
+      // If not split, paid_by = collector (already set above)
     } else if (category === "grading") {
       cardData.grading_fee = amountValue;
-      cardData.purchase_price = 0;
     } else if (category === "shipping") {
       cardData.shipping_to_grader = amountValue / 2;
       cardData.shipping_from_grader = amountValue / 2;
-      cardData.purchase_price = 0;
     } else {
-      // Regular card purchase
       cardData.purchase_price = amountValue;
     }
 
-    const { data, error } = await supabase.from("cards").insert([cardData]).select();
+    const { error } = await supabase.from("cards").insert([cardData]);
 
     setSaving(false);
 
@@ -130,45 +130,46 @@ export default function Add({ onAdd, currentUser }: Props) {
       return;
     }
 
-    // Reset form
-    setRawAmount("");
-    setDescription("");
-    setCategory("card");
-    setPayer(currentUser);
-    setTransferDirection("quez_to_stevie");
-
     onAdd();
+  };
+
+  const getPlaceholder = () => {
+    if (isSale) return "e.g. Charizard Base Set sale";
+    if (isTransfer) return "e.g. Settlement cash";
+    return "e.g. Charizard Base Set purchase";
   };
 
   return (
     <div className="page page-narrow">
-      <div className="card add-card">
+      <div className="amount-card">
         <div className="amount-entry">
           <span className="cur">$</span>
-          <span className="val" id="amt-val">
-            {rawAmount ? (
-              rawAmount
-            ) : (
-              <span className="ph">0.00</span>
-            )}
-            <span className="caret"></span>
+          <span className="val">
+            {formattedAmount}
+            {isDesktopTyping && <span className="caret"></span>}
           </span>
           <div>
-            <span className="split-pill" id="split-pill">
-              ½&nbsp;${formattedHalf} each — always 50/50
+            <span className="split-pill">
+              {isTransfer
+                ? "Full transfer"
+                : isSale
+                ? saleSplit
+                  ? "Split equally"
+                  : `${formattedHalf} each owed`
+                : `${formattedHalf} each`}
             </span>
           </div>
         </div>
 
         <form onSubmit={handleSubmit}>
           <div className="field">
-            <label htmlFor="desc-input">What was it?</label>
+            <label htmlFor="desc">What was it?</label>
             <input
               ref={descInputRef}
-              id="desc-input"
+              id="desc"
               className="text-input"
               type="text"
-              placeholder={category === "profit" ? "e.g. Charizard Base Set sale" : "e.g. Charizard Base Set purchase"}
+              placeholder={getPlaceholder()}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               required
@@ -177,7 +178,7 @@ export default function Add({ onAdd, currentUser }: Props) {
 
           <div className="field">
             <label>Category</label>
-            <div className="cats" id="cat-row">
+            <div className="cats">
               {CATEGORIES.map((cat) => (
                 <button
                   key={cat.key}
@@ -191,7 +192,7 @@ export default function Add({ onAdd, currentUser }: Props) {
             </div>
           </div>
 
-          {!isTransfer && (
+          {!isTransfer && !isSale && (
             <div className="field">
               <label>Who paid?</label>
               <div className="payer-toggle" id="payer-row">
@@ -211,6 +212,49 @@ export default function Add({ onAdd, currentUser }: Props) {
                   <span className="avatar u2">{otherUserCapitalized[0]}</span>
                   {otherUserCapitalized}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {isSale && (
+            <div className="field">
+              <label>Who collected?</label>
+              <div className="payer-toggle" id="payer-row">
+                <button
+                  type="button"
+                  className={`payer ${payer === "quez" ? "on" : ""}`}
+                  onClick={() => setPayer("quez")}
+                >
+                  <span className="avatar u1">{currentUserCapitalized[0]}</span>
+                  {currentUserCapitalized}
+                </button>
+                <button
+                  type="button"
+                  className={`payer ${payer === "stevie" ? "on" : ""}`}
+                  onClick={() => setPayer("stevie")}
+                >
+                  <span className="avatar u2">{otherUserCapitalized[0]}</span>
+                  {otherUserCapitalized}
+                </button>
+              </div>
+
+              <div style={{ marginTop: "12px" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={saleSplit}
+                    onChange={(e) => setSaleSplit(e.target.checked)}
+                    style={{ width: "18px", height: "18px", accentColor: "var(--sage)" }}
+                  />
+                  <span style={{ color: "var(--text-mid)", fontSize: "14px" }}>
+                    Did you split the cash from the sale?
+                  </span>
+                </label>
+                <p style={{ fontSize: "12px", color: "var(--text-low)", marginTop: "6px", marginLeft: "28px" }}>
+                  {saleSplit
+                    ? "Cash was split equally. This reduces total debt."
+                    : "One person kept the cash. Their share counts as collected."}
+                </p>
               </div>
             </div>
           )}
@@ -239,56 +283,28 @@ export default function Add({ onAdd, currentUser }: Props) {
             </div>
           )}
 
-          {/* Mobile keypad */}
-          <div className="keypad" id="keypad">
-            <button type="button" className="key" onClick={() => pressKey("1")}>
-              1
-            </button>
-            <button type="button" className="key" onClick={() => pressKey("2")}>
-              2
-            </button>
-            <button type="button" className="key" onClick={() => pressKey("3")}>
-              3
-            </button>
-            <button type="button" className="key" onClick={() => pressKey("4")}>
-              4
-            </button>
-            <button type="button" className="key" onClick={() => pressKey("5")}>
-              5
-            </button>
-            <button type="button" className="key" onClick={() => pressKey("6")}>
-              6
-            </button>
-            <button type="button" className="key" onClick={() => pressKey("7")}>
-              7
-            </button>
-            <button type="button" className="key" onClick={() => pressKey("8")}>
-              8
-            </button>
-            <button type="button" className="key" onClick={() => pressKey("9")}>
-              9
-            </button>
-            <button type="button" className="key" onClick={() => pressKey(".")}>
-              .
-            </button>
-            <button type="button" className="key" onClick={() => pressKey("0")}>
-              0
-            </button>
-            <button type="button" className="key" data-k="del" onClick={() => pressKey("del")}>
-              ⌫
-            </button>
+          <div className="keypad">
+            <button type="button" className="key" onClick={() => pressKey("1")}>1</button>
+            <button type="button" className="key" onClick={() => pressKey("2")}>2</button>
+            <button type="button" className="key" onClick={() => pressKey("3")}>3</button>
+            <button type="button" className="key" onClick={() => pressKey("4")}>4</button>
+            <button type="button" className="key" onClick={() => pressKey("5")}>5</button>
+            <button type="button" className="key" onClick={() => pressKey("6")}>6</button>
+            <button type="button" className="key" onClick={() => pressKey("7")}>7</button>
+            <button type="button" className="key" onClick={() => pressKey("8")}>8</button>
+            <button type="button" className="key" onClick={() => pressKey("9")}>9</button>
+            <button type="button" className="key" onClick={() => pressKey(".")}>.</button>
+            <button type="button" className="key" onClick={() => pressKey("0")}>0</button>
+            <button type="button" className="key" onClick={() => pressKey("del")}>⌫</button>
           </div>
 
           <button
             type="submit"
             className="cta"
             disabled={saving || !amountValue || !description.trim()}
-            style={{
-              opacity: saving || !amountValue || !description.trim() ? 0.5 : 1,
-              pointerEvents: saving ? "none" : "auto",
-            }}
+            style={{ width: "100%", marginTop: "20px" }}
           >
-            {saving ? "Saving..." : "Add &amp; split"}
+            {saving ? "Saving..." : "Save entry"}
           </button>
         </form>
       </div>

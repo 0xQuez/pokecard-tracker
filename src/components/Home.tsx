@@ -111,8 +111,12 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
         }
       } else if (isProfit) {
         const profit = c.sale_price || total;
-        // Profit is REVENUE for the collector, counted against their fair share
-        if (c.paid_by === currentUserCapitalized) {
+        // Sale: profit is REVENUE for whoever collected
+        if (c.paid_by === "Both") {
+          // Cash was split equally
+          currentUserProfitCollected += profit / 2;
+          otherUserProfitCollected += profit / 2;
+        } else if (c.paid_by === currentUserCapitalized) {
           currentUserProfitCollected += profit;
         } else {
           otherUserProfitCollected += profit;
@@ -334,7 +338,11 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
                       <span className={`dot ${card.paid_by === currentUserCapitalized || card.transfer_from === currentUserCapitalized ? "u1" : "u2"}`}></span>
                       {isTransfer && card.transfer_from && card.transfer_to
                         ? `${card.transfer_from} sent ${card.transfer_to} $${total.toFixed(2)}`
-                        : `${card.paid_by} paid · {formatDate(card.created_at)}`}
+                        : isProfit
+                          ? (card.paid_by === "Both"
+                            ? `Both collected · ${formatDate(card.created_at)}`
+                            : `${card.paid_by} collected · ${formatDate(card.created_at)}`)
+                          : `${card.paid_by} paid · ${formatDate(card.created_at)}`}
                     </div>
                   </div>
                   <div className="tx-amt">

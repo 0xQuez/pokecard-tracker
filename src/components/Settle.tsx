@@ -80,7 +80,10 @@ export default function Settle({ cards, currentUser, onSettle, onRefresh }: Prop
         }
       } else if (isProfit) {
         const profit = c.sale_price || total;
-        if (c.paid_by === currentUserCapitalized) {
+        if (c.paid_by === "Both") {
+          currentUserProfitCollected += profit / 2;
+          otherUserProfitCollected += profit / 2;
+        } else if (c.paid_by === currentUserCapitalized) {
           currentUserProfitCollected += profit;
         } else {
           otherUserProfitCollected += profit;

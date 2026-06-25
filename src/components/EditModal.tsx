@@ -41,7 +41,7 @@ const CATEGORIES = [
   { key: "grading", label: "⭐ Grading", icon: "⭐" },
   { key: "shipping", label: "📦 Shipping", icon: "📦" },
   { key: "supplies", label: "📦 Supplies", icon: "📦" },
-  { key: "profit", label: "💰 Profit", icon: "💰" },
+  { key: "sale", label: "💰 Sale", icon: "💰" },
   { key: "transfer", label: "💸 Transfer", icon: "💸" },
 ];
 
@@ -69,12 +69,13 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
   const [category, setCategory] = useState("card");
   const [payer, setPayer] = useState<"quez" | "stevie">(currentUser);
   const [transferDirection, setTransferDirection] = useState<"quez_to_stevie" | "stevie_to_quez">("quez_to_stevie");
+  const [saleSplit, setSaleSplit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const descInputRef = useRef<HTMLInputElement>(null);
 
   const isTransfer = category === "transfer";
-  const isProfit = category === "profit";
+  const isSale = category === "sale";
 
   // Initialize form with card data
   useEffect(() => {
@@ -86,7 +87,7 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
       setRawAmount(isProfitCard ? (card.sale_price || total).toString() : total.toString());
       setDescription(card.card_name);
       if (isProfitCard) {
-        setCategory("profit");
+        setCategory("sale");
       } else if (isTransferCard) {
         setCategory("transfer");
         setTransferDirection(card.transfer_from === currentUserCapitalized ? "quez_to_stevie" : "stevie_to_quez");
@@ -94,6 +95,7 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
         setCategory("card");
       }
       setPayer(card.paid_by === currentUserCapitalized ? "quez" : "stevie");
+      setSaleSplit(card.paid_by === "Both");
     }
   }, [card, currentUser]);
 
@@ -148,16 +150,16 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
       insurance: 0,
       other_costs: 0,
       notes: card.notes,
-      paid_by: payer === "quez" ? currentUserCapitalized : otherUserCapitalized,
+      paid_by: isSale && saleSplit ? "Both" : payer === "quez" ? currentUserCapitalized : otherUserCapitalized,
       split_percent: card.split_percent,
-      type: isProfit ? "profit" : isTransfer ? "transfer" : "expense",
+      type: isSale ? "profit" : isTransfer ? "transfer" : "expense",
       sale_price: card.sale_price,
       date_sold: card.date_sold,
       date_acquired: card.date_acquired,
       grade_received: card.grade_received,
     };
 
-    if (isProfit) {
+    if (isSale) {
       cardData.sale_price = amountValue;
       cardData.date_sold = card.date_sold || new Date().toISOString().split("T")[0];
     } else if (isTransfer) {
@@ -223,7 +225,15 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
               <span className="caret"></span>
             </span>
             <div>
-              <span className="split-pill">½&nbsp;${formattedHalf} each</span>
+              <span className="split-pill">
+                {isTransfer
+                  ? "Full transfer"
+                  : isSale
+                  ? saleSplit
+                    ? "Split equally"
+                    : `${formattedHalf} each owed`
+                  : `${formattedHalf} each`}
+              </span>
             </div>
           </div>
 
@@ -234,7 +244,7 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
               id="edit-desc"
               className="text-input"
               type="text"
-              placeholder={category === "profit" ? "e.g. Charizard Base Set sale" : category === "transfer" ? "e.g. Settlement cash" : "e.g. Charizard Base Set purchase"}
+              placeholder={isSale ? "e.g. Charizard Base Set sale" : isTransfer ? "e.g. Settlement cash" : "e.g. Charizard Base Set purchase"}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               required
@@ -257,7 +267,7 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
             </div>
           </div>
 
-          {!isTransfer && (
+          {!isTransfer && !isSale && (
             <div className="field">
               <label>Who paid?</label>
               <div className="payer-toggle">
@@ -277,6 +287,49 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
                   <span className="avatar u2">{otherUserCapitalized[0]}</span>
                   {otherUserCapitalized}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {isSale && (
+            <div className="field">
+              <label>Who collected?</label>
+              <div className="payer-toggle">
+                <button
+                  type="button"
+                  className={`payer ${payer === "quez" ? "on" : ""}`}
+                  onClick={() => setPayer("quez")}
+                >
+                  <span className="avatar u1">{currentUserCapitalized[0]}</span>
+                  {currentUserCapitalized}
+                </button>
+                <button
+                  type="button"
+                  className={`payer ${payer === "stevie" ? "on" : ""}`}
+                  onClick={() => setPayer("stevie")}
+                >
+                  <span className="avatar u2">{otherUserCapitalized[0]}</span>
+                  {otherUserCapitalized}
+                </button>
+              </div>
+
+              <div style={{ marginTop: "12px" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={saleSplit}
+                    onChange={(e) => setSaleSplit(e.target.checked)}
+                    style={{ width: "18px", height: "18px", accentColor: "var(--sage)" }}
+                  />
+                  <span style={{ color: "var(--text-mid)", fontSize: "14px" }}>
+                    Did you split the cash from the sale?
+                  </span>
+                </label>
+                <p style={{ fontSize: "12px", color: "var(--text-low)", marginTop: "6px", marginLeft: "28px" }}>
+                  {saleSplit
+                    ? "Cash was split equally. This reduces total debt."
+                    : "One person kept the cash. Their share counts as collected."}
+                </p>
               </div>
             </div>
           )}
