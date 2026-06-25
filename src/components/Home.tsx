@@ -78,25 +78,23 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
   const otherUserCapitalized = otherUser.charAt(0).toUpperCase() + otherUser.slice(1);
 
   const breakdown = useMemo(() => {
-    let currentUserPaid = 0;
-    let otherUserPaid = 0;
-    let currentUserFairShare = 0;
-    let otherUserFairShare = 0;
+    // Expenses track who paid
+    let currentUserExpensesPaid = 0;
+    let otherUserExpensesPaid = 0;
+
+    // Profits track who collected (reduces their "net spent")
+    let currentUserProfitCollected = 0;
+    let otherUserProfitCollected = 0;
+
+    // Transfers: direct cash flows
+    let currentUserTransferAdjustment = 0;
+    let currentUserTransfersGiven = 0;
+    let currentUserTransfersReceived = 0;
+
     let totalExpenses = 0;
     let totalProfits = 0;
     let totalGraded = 0;
     let totalSold = 0;
-    let currentUserExpensesPaid = 0;
-    let otherUserExpensesPaid = 0;
-    let currentUserProfitsReceived = 0;
-    let otherUserProfitsReceived = 0;
-    let currentUserTransfersGiven = 0;   // cash sent TO other person
-    let currentUserTransfersReceived = 0; // cash received FROM other person
-    let otherUserTransfersGiven = 0;
-    let otherUserTransfersReceived = 0;
-
-    // Track transfer adjustments (100% to sender/receiver, not split)
-    let currentUserTransferAdjustment = 0;
 
     for (const c of cards) {
       const total = calcTotal(c);
@@ -104,53 +102,33 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
       const isProfit = c.type === "profit" || c.sale_price;
 
       if (isTransfer) {
-        // Transfer: 100% attributed to sender/receiver, NOT split
         if (c.transfer_from === currentUserCapitalized) {
-          // Current user SENT money to other user
           currentUserTransferAdjustment -= total;
           currentUserTransfersGiven += total;
-          otherUserTransfersReceived += total;
         } else if (c.transfer_to === currentUserCapitalized) {
-          // Current user RECEIVED money from other user
           currentUserTransferAdjustment += total;
           currentUserTransfersReceived += total;
-          otherUserTransfersGiven += total;
         }
       } else if (isProfit) {
-        // Profit entry - split 50/50
         const profit = c.sale_price || total;
+        // Profit is REVENUE for the collector, counted against their fair share
         if (c.paid_by === currentUserCapitalized) {
-          currentUserPaid += profit;
-          currentUserFairShare += profit / 2;
-          otherUserFairShare += profit / 2;
-          currentUserProfitsReceived += profit;
+          currentUserProfitCollected += profit;
         } else {
-          otherUserPaid += profit;
-          otherUserFairShare += profit / 2;
-          currentUserFairShare += profit / 2;
-          otherUserProfitsReceived += profit;
+          otherUserProfitCollected += profit;
         }
         totalProfits += profit;
         if (c.sale_price) totalSold++;
       } else {
-        // Expense entry - split by percentage
-        const currentUserShare = total * (c.split_percent / 100);
-        const otherUserShare = total * ((100 - c.split_percent) / 100);
-
+        // Expense: whoever paid gets the full amount added
         if (c.paid_by === currentUserCapitalized) {
-          currentUserPaid += total;
-          currentUserFairShare += currentUserShare;
-          otherUserFairShare += otherUserShare;
           currentUserExpensesPaid += total;
         } else if (c.paid_by === otherUserCapitalized) {
-          otherUserPaid += total;
-          otherUserFairShare += otherUserShare;
-          currentUserFairShare += currentUserShare;
           otherUserExpensesPaid += total;
         } else {
-          // Both - each paid their split share
-          currentUserPaid += currentUserShare;
-          otherUserPaid += otherUserShare;
+          // Both paid their split share
+          const currentUserShare = total * (c.split_percent / 100);
+          const otherUserShare = total * ((100 - c.split_percent) / 100);
           currentUserExpensesPaid += currentUserShare;
           otherUserExpensesPaid += otherUserShare;
         }
@@ -161,11 +139,19 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
       }
     }
 
-    const currentUserBalance = currentUserPaid - currentUserFairShare + currentUserTransferAdjustment;
-    const otherUserBalance = otherUserPaid - otherUserFairShare - currentUserTransferAdjustment;
+    // Net spent = expenses paid - profit collected (per person)
+    const currentUserNet = currentUserExpensesPaid - currentUserProfitCollected;
+    const otherUserNet = otherUserExpensesPaid - otherUserProfitCollected;
+    const totalNetSpent = currentUserNet + otherUserNet;
+    const fairShareEach = totalNetSpent / 2;
+
+    // Balance = net spent - fair share
+    // Positive = overpaid (owed money), Negative = underpaid (owes money)
+    const currentUserBalance = currentUserNet - fairShareEach + currentUserTransferAdjustment;
+    const otherUserBalance = otherUserNet - fairShareEach - currentUserTransferAdjustment;
 
     let owesAmount = 0;
-    let owesDirection = ""; // "you_owe" | "they_owe" | "even"
+    let owesDirection = "";
 
     if (currentUserBalance >= 0 && otherUserBalance <= 0) {
       owesAmount = Math.abs(otherUserBalance);
@@ -177,37 +163,32 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
       owesDirection = "even";
     }
 
-    const totalInvested = totalExpenses;
-    const splitAmount = totalInvested / 2;
+    const splitAmount = fairShareEach;
 
     const recent = [...cards]
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, 5);
 
     return {
-      currentUserPaid,
-      otherUserPaid,
-      currentUserFairShare,
-      otherUserFairShare,
+      currentUserExpensesPaid,
+      otherUserExpensesPaid,
+      currentUserProfitCollected,
+      otherUserProfitCollected,
+      currentUserNet,
+      otherUserNet,
       currentUserBalance,
       otherUserBalance,
       currentUserTransferAdjustment,
       owesAmount,
       owesDirection,
-      totalInvested,
+      totalNetSpent,
       totalExpenses,
       totalProfits,
       totalGraded,
       totalSold,
       splitAmount,
-      currentUserExpensesPaid,
-      otherUserExpensesPaid,
-      currentUserProfitsReceived,
-      otherUserProfitsReceived,
       currentUserTransfersGiven,
       currentUserTransfersReceived,
-      otherUserTransfersGiven,
-      otherUserTransfersReceived,
       recent,
     };
   }, [cards, currentUser]);
@@ -230,7 +211,7 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
         <div>
           <div className="hero">
             <div className="label">Shared balance</div>
-            <div className="big amount">${breakdown.totalInvested.toFixed(2)}</div>
+            <div className="big amount">${breakdown.totalNetSpent.toFixed(2)}</div>
             <div className="sub">
               {breakdown.owesDirection === "they_owe" && (
                 <>
@@ -279,17 +260,19 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
             <div className="card partner">
               <div className="who">
                 <div className="avatar u1">{currentUserCapitalized[0]}</div>
-                {currentUserCapitalized} expenses
+                {currentUserCapitalized} contributions
               </div>
-              <div className="spent amount neg">${breakdown.currentUserExpensesPaid.toFixed(2)}</div>
-              <div className="note">Expenses you paid for</div>
-              {breakdown.currentUserProfitsReceived > 0 && (
+              <div className="spent amount neg">${breakdown.currentUserExpensesPaid.toFixed(2)} spent</div>
+              {breakdown.currentUserProfitCollected > 0 && (
                 <div className="spent amount pos" style={{ fontSize: "16px", marginTop: "4px" }}>
-                  +${breakdown.currentUserProfitsReceived.toFixed(2)} profits received
+                  +${breakdown.currentUserProfitCollected.toFixed(2)} collected
                 </div>
               )}
+              <div className="note" style={{ marginTop: "4px" }}>
+                Net: ${breakdown.currentUserNet.toFixed(2)}
+              </div>
               {(breakdown.currentUserTransfersGiven > 0 || breakdown.currentUserTransfersReceived > 0) && (
-                <div style={{ marginTop: "8px", fontSize: "13px", color: "var(--text-mid)" }}>
+                <div style={{ marginTop: "4px", fontSize: "13px", color: "var(--text-mid)" }}>
                   {breakdown.currentUserTransfersGiven > 0 && (
                     <div className="neg">Sent: ${breakdown.currentUserTransfersGiven.toFixed(2)}</div>
                   )}
@@ -302,25 +285,17 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
             <div className="card partner">
               <div className="who">
                 <div className="avatar u2">{otherUserCapitalized[0]}</div>
-                {otherUserCapitalized} expenses
+                {otherUserCapitalized} contributions
               </div>
-              <div className="spent amount neg">${breakdown.otherUserExpensesPaid.toFixed(2)}</div>
-              <div className="note">Expenses they paid for</div>
-              {breakdown.otherUserProfitsReceived > 0 && (
+              <div className="spent amount neg">${breakdown.otherUserExpensesPaid.toFixed(2)} spent</div>
+              {breakdown.otherUserProfitCollected > 0 && (
                 <div className="spent amount pos" style={{ fontSize: "16px", marginTop: "4px" }}>
-                  +${breakdown.otherUserProfitsReceived.toFixed(2)} profits received
+                  +${breakdown.otherUserProfitCollected.toFixed(2)} collected
                 </div>
               )}
-              {(breakdown.otherUserTransfersGiven > 0 || breakdown.otherUserTransfersReceived > 0) && (
-                <div style={{ marginTop: "8px", fontSize: "13px", color: "var(--text-mid)" }}>
-                  {breakdown.otherUserTransfersGiven > 0 && (
-                    <div className="neg">Sent: ${breakdown.otherUserTransfersGiven.toFixed(2)}</div>
-                  )}
-                  {breakdown.otherUserTransfersReceived > 0 && (
-                    <div className="pos">Received: ${breakdown.otherUserTransfersReceived.toFixed(2)}</div>
-                  )}
-                </div>
-              )}
+              <div className="note" style={{ marginTop: "4px" }}>
+                Net: ${breakdown.otherUserNet.toFixed(2)}
+              </div>
             </div>
           </div>
         </div>
@@ -331,16 +306,10 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
             <a data-go="activity">See all</a>
           </div>
           <div className="card tx-group">
-            {breakdown.recent.map((card, i) => {
+            {breakdown.recent.map((card) => {
               const total = calcTotal(card);
               const isTransfer = card.type === "transfer";
               const isProfit = card.type === "profit" || card.sale_price;
-              const amount = isTransfer ? total : isProfit ? (card.sale_price || total) : -total;
-              const halfAmount = isTransfer
-                ? total
-                : isProfit
-                  ? (card.sale_price || total) / 2
-                  : total * (card.split_percent / 100);
 
               let catIcon = "🃏";
               if (card.grading_fee > 0 || card.shipping_to_grader > 0 || card.shipping_from_grader > 0) {
@@ -372,7 +341,7 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
                     <div className={`a ${isTransfer ? "transfer" : isProfit ? "pos" : "neg"}`}>
                       {isTransfer ? "" : isProfit ? "+" : "−"}${(isProfit ? (card.sale_price || total) : total).toFixed(2)}
                     </div>
-                    <div className="half">{halfAmount.toFixed(2)} each</div>
+                    <div className="half">{isTransfer ? "full transfer" : isProfit ? `${((card.sale_price || total) / 2).toFixed(2)} each` : `${(total * (card.split_percent / 100)).toFixed(2)} each`}</div>
                   </div>
                   {onEdit && (
                     <button

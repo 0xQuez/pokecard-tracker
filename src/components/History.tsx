@@ -68,11 +68,9 @@ export default function History({ cards, currentUser }: Props) {
   }, [cards]);
 
   const settlementCycles = useMemo(() => {
-    // Group settled cards by settled_at timestamp
     const cycles: Record<string, Card[]> = {};
     for (const c of settledCards) {
       if (!c.settled_at) continue;
-      // Round to the day for grouping
       const date = new Date(c.settled_at);
       const dayKey = date.toLocaleDateString("en-US", {
         weekday: "long",
@@ -83,7 +81,6 @@ export default function History({ cards, currentUser }: Props) {
       if (!cycles[dayKey]) cycles[dayKey] = [];
       cycles[dayKey].push(c);
     }
-    // Sort cycles by most recent first
     return Object.entries(cycles).sort((a, b) => {
       const dateA = new Date(a[1][0].settled_at || 0);
       const dateB = new Date(b[1][0].settled_at || 0);
@@ -92,11 +89,13 @@ export default function History({ cards, currentUser }: Props) {
   }, [settledCards]);
 
   const calcCycleStats = (cycleCards: Card[]) => {
-    let quezPaid = 0;
-    let steviePaid = 0;
+    let currentUserExpensesPaid = 0;
+    let otherUserExpensesPaid = 0;
+    let currentUserProfitCollected = 0;
+    let otherUserProfitCollected = 0;
     let totalExpenses = 0;
     let totalProfits = 0;
-    let transfers = 0;
+    let currentUserTransferAdjustment = 0;
 
     for (const c of cycleCards) {
       const total = calcTotal(c);
@@ -104,36 +103,51 @@ export default function History({ cards, currentUser }: Props) {
       const isTransfer = c.type === "transfer";
 
       if (isTransfer) {
-        transfers += total;
+        if (c.transfer_from === currentUserCapitalized) {
+          currentUserTransferAdjustment -= total;
+        } else if (c.transfer_to === currentUserCapitalized) {
+          currentUserTransferAdjustment += total;
+        }
       } else if (isProfit) {
         const profit = c.sale_price || total;
-        if (c.paid_by === "Quez") {
-          quezPaid += profit;
+        if (c.paid_by === currentUserCapitalized) {
+          currentUserProfitCollected += profit;
         } else {
-          steviePaid += profit;
+          otherUserProfitCollected += profit;
         }
         totalProfits += profit;
       } else {
         if (c.paid_by === "Quez") {
-          quezPaid += total;
+          currentUserExpensesPaid += total;
         } else {
-          steviePaid += total;
+          otherUserExpensesPaid += total;
         }
         totalExpenses += total;
       }
     }
 
-    const totalSpent = totalExpenses + totalProfits;
-    const fairShare = totalSpent / 2;
+    const currentUserNet = currentUserExpensesPaid - currentUserProfitCollected;
+    const otherUserNet = otherUserExpensesPaid - otherUserProfitCollected;
+    const totalNetSpent = currentUserNet + otherUserNet;
+    const fairShareEach = totalNetSpent / 2;
+
+    const currentUserBalance = currentUserNet - fairShareEach + currentUserTransferAdjustment;
+    const otherUserBalance = otherUserNet - fairShareEach - currentUserTransferAdjustment;
 
     return {
-      quezPaid,
-      steviePaid,
-      totalSpent,
-      fairShare,
-      quezBalance: quezPaid - fairShare,
-      stevieBalance: steviePaid - fairShare,
-      transfers,
+      currentUserExpensesPaid,
+      otherUserExpensesPaid,
+      currentUserProfitCollected,
+      otherUserProfitCollected,
+      currentUserNet,
+      otherUserNet,
+      currentUserBalance,
+      otherUserBalance,
+      totalExpenses,
+      totalProfits,
+      totalNetSpent,
+      fairShareEach,
+      currentUserTransferAdjustment,
       count: cycleCards.length,
     };
   };
@@ -225,37 +239,57 @@ export default function History({ cards, currentUser }: Props) {
               <div className="break-row">
                 <span className="l">
                   <span className="dot u1"></span>
-                  {currentUserCapitalized} covered
+                  {currentUserCapitalized} expenses
                 </span>
-                <span className="r amount">${stats.quezPaid.toFixed(2)}</span>
+                <span className="r amount">${stats.currentUserExpensesPaid.toFixed(2)}</span>
               </div>
               <div className="break-row">
                 <span className="l">
                   <span className="dot u2"></span>
-                  {otherUserCapitalized} covered
+                  {otherUserCapitalized} expenses
                 </span>
-                <span className="r amount">${stats.steviePaid.toFixed(2)}</span>
+                <span className="r amount">${stats.otherUserExpensesPaid.toFixed(2)}</span>
               </div>
+              {stats.currentUserProfitCollected > 0 && (
+                <div className="break-row" style={{ color: "var(--moss)" }}>
+                  <span className="l">
+                    <span className="dot u1"></span>
+                    {currentUserCapitalized} collected
+                  </span>
+                  <span className="r amount">${stats.currentUserProfitCollected.toFixed(2)}</span>
+                </div>
+              )}
+              {stats.otherUserProfitCollected > 0 && (
+                <div className="break-row" style={{ color: "var(--moss)" }}>
+                  <span className="l">
+                    <span className="dot u2"></span>
+                    {otherUserCapitalized} collected
+                  </span>
+                  <span className="r amount">${stats.otherUserProfitCollected.toFixed(2)}</span>
+                </div>
+              )}
               <div className="break-row">
                 <span className="l">Fair share each (½)</span>
-                <span className="r amount">${stats.fairShare.toFixed(2)}</span>
+                <span className="r amount">${stats.fairShareEach.toFixed(2)}</span>
               </div>
-              {stats.transfers > 0 && (
+              {stats.currentUserTransferAdjustment !== 0 && (
                 <div className="break-row" style={{ color: "var(--sand)" }}>
                   <span className="l">Transfers adjustment</span>
-                  <span className="r amount">${stats.transfers.toFixed(2)}</span>
+                  <span className="r amount">
+                    {stats.currentUserTransferAdjustment > 0 ? "+" : ""}${stats.currentUserTransferAdjustment.toFixed(2)}
+                  </span>
                 </div>
               )}
               <div className="break-row total">
                 <span className="l">
-                  {stats.quezBalance > 0
+                  {stats.currentUserBalance > 0
                     ? `${otherUserCapitalized} owed ${currentUserCapitalized}`
-                    : stats.stevieBalance > 0
+                    : stats.otherUserBalance > 0
                     ? `${currentUserCapitalized} owed ${otherUserCapitalized}`
                     : "All even"}
                 </span>
                 <span className="r amount">
-                  {Math.abs(Math.max(stats.quezBalance, stats.stevieBalance)).toFixed(2)}
+                  {Math.abs(Math.max(stats.currentUserBalance, stats.otherUserBalance)).toFixed(2)}
                 </span>
               </div>
             </div>
