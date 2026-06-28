@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { calcTotal, formatDate, getDayLabel, userCapitalize } from "@/lib/helpers";
 
 type Card = {
   id: number;
@@ -35,41 +36,10 @@ type Props = {
 
 type Filter = "all" | "quez" | "stevie" | "expenses" | "profits";
 
-function calcTotal(c: Card): number {
-  if (c.type === "transfer") {
-    return c.transfer_amount || 0;
-  }
-  return (
-    c.purchase_price +
-    c.grading_fee +
-    c.shipping_to_grader +
-    c.shipping_from_grader +
-    c.insurance +
-    c.other_costs
-  );
-}
-
-function formatDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-function getDayLabel(dateStr: string): string {
-  const date = new Date(dateStr);
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-
-  if (date.toDateString() === today.toDateString()) return "Today";
-  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
-
-  return date.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
-}
-
 export default function Activity({ cards, currentUser, onEdit }: Props) {
   const otherUser = currentUser === "quez" ? "stevie" : "quez";
-  const currentUserCapitalized = currentUser.charAt(0).toUpperCase() + currentUser.slice(1);
-  const otherUserCapitalized = otherUser.charAt(0).toUpperCase() + otherUser.slice(1);
+  const currentUserCapitalized = userCapitalize(currentUser);
+  const otherUserCapitalized = userCapitalize(otherUser);
 
   const [filter, setFilter] = useState<Filter>("all");
 
@@ -101,7 +71,7 @@ export default function Activity({ cards, currentUser, onEdit }: Props) {
 
   return (
     <div className="page page-narrow">
-      <div className="filters" style={{ marginTop: 8 }}>
+      <div className="filters">
         <button className={`chip ${filter === "all" ? "on" : ""}`} onClick={() => setFilter("all")}>All</button>
         <button className={`chip ${filter === "quez" ? "on" : ""}`} onClick={() => setFilter("quez")}>
           <span className="dot u1"></span>{currentUserCapitalized}
@@ -118,9 +88,10 @@ export default function Activity({ cards, currentUser, onEdit }: Props) {
       </div>
 
       {dayOrder.length === 0 ? (
-        <div className="card" style={{ textAlign: "center", padding: "48px 24px" }}>
-          <p className="tx-amt" style={{ fontSize: "48px", marginBottom: "8px" }}>📭</p>
-          <p style={{ color: "var(--text-mid)" }}>No entries match this filter</p>
+        <div className="empty-activity">
+          <p className="empty-icon">📭</p>
+          <p className="empty-title">{filter === "all" ? "No entries yet" : "Nothing matches this filter"}</p>
+          <p className="empty-text">{filter === "all" ? "Add cards to see activity here." : "Try another filter to see more results."}</p>
         </div>
       ) : (
         dayOrder.map((day) => (
@@ -147,7 +118,7 @@ export default function Activity({ cards, currentUser, onEdit }: Props) {
                       <div className="t">
                         {card.card_name} {card.card_id ? `#${card.card_id}` : ""}
                         {isTransfer && card.transfer_from && card.transfer_to && (
-                          <span style={{ fontWeight: "normal", fontSize: "12px", marginLeft: "8px", color: "var(--text-mid)" }}>
+                          <span className="tx-transfer-note">
                             ({card.transfer_from} → {card.transfer_to})
                           </span>
                         )}
@@ -156,7 +127,7 @@ export default function Activity({ cards, currentUser, onEdit }: Props) {
                         <span className={`dot ${card.paid_by === currentUserCapitalized || card.transfer_from === currentUserCapitalized ? "u1" : "u2"}`}></span>
                         {isTransfer && card.transfer_from && card.transfer_to
                           ? `${card.transfer_from} sent ${card.transfer_to} $${total.toFixed(2)}`
-                          : `${card.paid_by} paid · {isProfit ? "Profit" : "Expense"}`}
+                          : `${card.paid_by} ${isProfit ? "collected" : "paid"} · ${isProfit ? "Profit" : "Expense"}`}
                       </div>
                     </div>
                     <div className="tx-amt">
@@ -176,13 +147,6 @@ export default function Activity({ cards, currentUser, onEdit }: Props) {
                         type="button"
                         className="edit-btn"
                         onClick={(e) => { e.stopPropagation(); onEdit(card); }}
-                        style={{
-                          width: 32, height: 32, borderRadius: "50%",
-                          display: "grid", placeItems: "center",
-                          background: "var(--surface-2)", border: "1px solid var(--line)",
-                          color: "var(--text-mid)", fontSize: 14, cursor: "pointer",
-                          flexShrink: 0, marginLeft: 12
-                        }}
                       >
                         ✎
                       </button>

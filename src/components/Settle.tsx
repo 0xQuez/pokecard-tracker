@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { calcTotal, userCapitalize } from "@/lib/helpers";
 
 type Card = {
   id: number;
@@ -35,24 +36,10 @@ type Props = {
   onRefresh: () => void;
 };
 
-function calcTotal(c: Card): number {
-  if (c.type === "transfer") {
-    return c.transfer_amount || 0;
-  }
-  return (
-    c.purchase_price +
-    c.grading_fee +
-    c.shipping_to_grader +
-    c.shipping_from_grader +
-    c.insurance +
-    c.other_costs
-  );
-}
-
 export default function Settle({ cards, currentUser, onSettle, onRefresh }: Props) {
   const otherUser = currentUser === "quez" ? "stevie" : "quez";
-  const currentUserCapitalized = currentUser.charAt(0).toUpperCase() + currentUser.slice(1);
-  const otherUserCapitalized = otherUser.charAt(0).toUpperCase() + otherUser.slice(1);
+  const currentUserCapitalized = userCapitalize(currentUser);
+  const otherUserCapitalized = userCapitalize(otherUser);
 
   const [settling, setSettling] = useState(false);
 
@@ -273,13 +260,6 @@ export default function Settle({ cards, currentUser, onSettle, onRefresh }: Prop
       <button className="cta ghost" style={{ width: "100%", margin: "0 0 22px" }}>
         Send a reminder
       </button>
-
-      {cards.length === 0 && (
-        <div className="card" style={{ textAlign: "center", padding: "48px 24px", marginTop: "16px" }}>
-          <p style={{ fontSize: "48px", marginBottom: "8px" }}>💸</p>
-          <p style={{ color: "var(--text-mid)" }}>No entries yet. Add some to see the settlement.</p>
-        </div>
-      )}
     </div>
   );
 }

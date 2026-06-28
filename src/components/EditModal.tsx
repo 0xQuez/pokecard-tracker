@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { calcTotal, userCapitalize } from "@/lib/helpers";
 
 type Card = {
   id: number;
@@ -40,29 +41,15 @@ const CATEGORIES = [
   { key: "card", label: "🃏 Card", icon: "🃏" },
   { key: "grading", label: "⭐ Grading", icon: "⭐" },
   { key: "shipping", label: "📦 Shipping", icon: "📦" },
-  { key: "supplies", label: "📦 Supplies", icon: "📦" },
+  { key: "supplies", label: "🧰 Supplies", icon: "🧰" },
   { key: "sale", label: "💰 Sale", icon: "💰" },
   { key: "transfer", label: "💸 Transfer", icon: "💸" },
 ];
 
-function calcTotal(c: Card): number {
-  if (c.type === "transfer") {
-    return c.transfer_amount || 0;
-  }
-  return (
-    c.purchase_price +
-    c.grading_fee +
-    c.shipping_to_grader +
-    c.shipping_from_grader +
-    c.insurance +
-    c.other_costs
-  );
-}
-
 export default function EditModal({ onClose, onSave, onDelete, card, currentUser }: Props) {
   const otherUser = currentUser === "quez" ? "stevie" : "quez";
-  const currentUserCapitalized = currentUser.charAt(0).toUpperCase() + currentUser.slice(1);
-  const otherUserCapitalized = otherUser.charAt(0).toUpperCase() + otherUser.slice(1);
+  const currentUserCapitalized = userCapitalize(currentUser);
+  const otherUserCapitalized = userCapitalize(otherUser);
 
   const [rawAmount, setRawAmount] = useState("");
   const [description, setDescription] = useState("");
@@ -153,7 +140,7 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
       paid_by: isSale && saleSplit ? "Both" : payer === "quez" ? currentUserCapitalized : otherUserCapitalized,
       split_percent: card.split_percent,
       type: isSale ? "profit" : isTransfer ? "transfer" : "expense",
-      sale_price: card.sale_price,
+      sale_price: null,
       date_sold: card.date_sold,
       date_acquired: card.date_acquired,
       grade_received: card.grade_received,

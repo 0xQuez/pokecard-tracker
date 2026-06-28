@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { userCapitalize } from "@/lib/helpers";
 
 type Props = {
   onAdd: () => void;
@@ -12,15 +13,15 @@ const CATEGORIES = [
   { key: "card", label: "🃏 Card", icon: "🃏" },
   { key: "grading", label: "⭐ Grading", icon: "⭐" },
   { key: "shipping", label: "📦 Shipping", icon: "📦" },
-  { key: "supplies", label: "📦 Supplies", icon: "📦" },
+  { key: "supplies", label: "🧰 Supplies", icon: "🧰" },
   { key: "sale", label: "💰 Sale", icon: "💰" },
   { key: "transfer", label: "💸 Transfer", icon: "💸" },
 ];
 
 export default function Add({ onAdd, currentUser }: Props) {
   const otherUser = currentUser === "quez" ? "stevie" : "quez";
-  const currentUserCapitalized = currentUser.charAt(0).toUpperCase() + currentUser.slice(1);
-  const otherUserCapitalized = otherUser.charAt(0).toUpperCase() + otherUser.slice(1);
+  const currentUserCapitalized = userCapitalize(currentUser);
+  const otherUserCapitalized = userCapitalize(otherUser);
 
   const [rawAmount, setRawAmount] = useState("");
   const [description, setDescription] = useState("");

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { calcTotal, formatDate, getDayLabel, userCapitalize } from "@/lib/helpers";
 
 type Card = {
   id: number;
@@ -34,48 +34,10 @@ type Props = {
   onEdit?: (card: Card) => void;
 };
 
-function calcTotal(c: Card): number {
-  if (c.type === "transfer") {
-    return c.transfer_amount || 0;
-  }
-  return (
-    c.purchase_price +
-    c.grading_fee +
-    c.shipping_to_grader +
-    c.shipping_from_grader +
-    c.insurance +
-    c.other_costs
-  );
-}
-
-function formatDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-
-  if (date.toDateString() === today.toDateString()) return "Today";
-  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
-
-  return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-}
-
-function getDayLabel(dateStr: string): string {
-  const date = new Date(dateStr);
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-
-  if (date.toDateString() === today.toDateString()) return "Today";
-  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
-
-  return date.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
-}
-
 export default function Home({ cards, currentUser, onEdit }: Props) {
   const otherUser = currentUser === "quez" ? "stevie" : "quez";
-  const currentUserCapitalized = currentUser.charAt(0).toUpperCase() + currentUser.slice(1);
-  const otherUserCapitalized = otherUser.charAt(0).toUpperCase() + otherUser.slice(1);
+  const currentUserCapitalized = userCapitalize(currentUser);
+  const otherUserCapitalized = userCapitalize(otherUser);
 
   const breakdown = useMemo(() => {
     // Expenses track who paid
@@ -200,7 +162,7 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
   if (cards.length === 0) {
     return (
       <div className="page">
-        <div className="hero" style={{ textAlign: "center" }}>
+        <div className="hero hero-center">
           <div className="label">Shared balance</div>
           <div className="big amount">$0.00</div>
           <div className="sub">Add your first card to get started</div>
@@ -231,8 +193,8 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
             </div>
             <div className="splitbar">
               <div className="track">
-                <div className="f1" style={{ width: "50%" }}></div>
-                <div className="f2" style={{ width: "50%" }}></div>
+                <div className="f1"></div>
+                <div className="f2"></div>
               </div>
               <div className="legend">
                 <span>
@@ -268,15 +230,15 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
               </div>
               <div className="spent amount neg">${breakdown.currentUserExpensesPaid.toFixed(2)} spent</div>
               {breakdown.currentUserProfitCollected > 0 && (
-                <div className="spent amount pos" style={{ fontSize: "16px", marginTop: "4px" }}>
+                <div className="spent amount pos partner-profit">
                   +${breakdown.currentUserProfitCollected.toFixed(2)} collected
                 </div>
               )}
-              <div className="note" style={{ marginTop: "4px" }}>
+              <div className="note partner-note">
                 Net: ${breakdown.currentUserNet.toFixed(2)}
               </div>
               {(breakdown.currentUserTransfersGiven > 0 || breakdown.currentUserTransfersReceived > 0) && (
-                <div style={{ marginTop: "4px", fontSize: "13px", color: "var(--text-mid)" }}>
+                <div className="partner-transfers">
                   {breakdown.currentUserTransfersGiven > 0 && (
                     <div className="neg">Sent: ${breakdown.currentUserTransfersGiven.toFixed(2)}</div>
                   )}
@@ -293,11 +255,11 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
               </div>
               <div className="spent amount neg">${breakdown.otherUserExpensesPaid.toFixed(2)} spent</div>
               {breakdown.otherUserProfitCollected > 0 && (
-                <div className="spent amount pos" style={{ fontSize: "16px", marginTop: "4px" }}>
+                <div className="spent amount pos partner-profit">
                   +${breakdown.otherUserProfitCollected.toFixed(2)} collected
                 </div>
               )}
-              <div className="note" style={{ marginTop: "4px" }}>
+              <div className="note partner-note">
                 Net: ${breakdown.otherUserNet.toFixed(2)}
               </div>
             </div>
@@ -329,7 +291,7 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
                     <div className="t">
                       {card.card_name} {card.card_id ? `#${card.card_id}` : ""}
                       {isTransfer && card.transfer_from && card.transfer_to && (
-                        <span style={{ fontWeight: "normal", fontSize: "12px", marginLeft: "8px", color: "var(--text-mid)" }}>
+                        <span className="tx-transfer-note">
                           ({card.transfer_from} → {card.transfer_to})
                         </span>
                       )}
@@ -356,13 +318,6 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
                       type="button"
                       className="edit-btn"
                       onClick={(e) => { e.stopPropagation(); onEdit(card); }}
-                      style={{
-                        width: 32, height: 32, borderRadius: "50%",
-                        display: "grid", placeItems: "center",
-                        background: "var(--surface-2)", border: "1px solid var(--line)",
-                        color: "var(--text-mid)", fontSize: 14, cursor: "pointer",
-                        flexShrink: 0, marginLeft: 12
-                      }}
                     >
                       ✎
                     </button>

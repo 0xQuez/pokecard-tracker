@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { calcTotal, userCapitalize } from "@/lib/helpers";
 
 type Card = {
   id: number;
@@ -32,20 +33,6 @@ type Props = {
   currentUser: "quez" | "stevie";
 };
 
-function calcTotal(c: Card): number {
-  if (c.type === "transfer") {
-    return c.transfer_amount || 0;
-  }
-  return (
-    c.purchase_price +
-    c.grading_fee +
-    c.shipping_to_grader +
-    c.shipping_from_grader +
-    c.insurance +
-    c.other_costs
-  );
-}
-
 function formatSettlementDate(dateStr: string): string {
   const date = new Date(dateStr);
   return date.toLocaleDateString("en-US", {
@@ -60,8 +47,8 @@ function formatSettlementDate(dateStr: string): string {
 
 export default function History({ cards, currentUser }: Props) {
   const otherUser = currentUser === "quez" ? "stevie" : "quez";
-  const currentUserCapitalized = currentUser.charAt(0).toUpperCase() + currentUser.slice(1);
-  const otherUserCapitalized = otherUser.charAt(0).toUpperCase() + otherUser.slice(1);
+  const currentUserCapitalized = userCapitalize(currentUser);
+  const otherUserCapitalized = userCapitalize(otherUser);
 
   const settledCards = useMemo(() => {
     return cards.filter((c) => c.settled_at);
@@ -120,7 +107,10 @@ export default function History({ cards, currentUser }: Props) {
         }
         totalProfits += profit;
       } else {
-        if (c.paid_by === "Quez") {
+        if (c.paid_by === "Both") {
+          currentUserExpensesPaid += total * (c.split_percent / 100);
+          otherUserExpensesPaid += total * ((100 - c.split_percent) / 100);
+        } else if (c.paid_by === currentUserCapitalized) {
           currentUserExpensesPaid += total;
         } else {
           otherUserExpensesPaid += total;
@@ -171,16 +161,6 @@ export default function History({ cards, currentUser }: Props) {
 
   return (
     <div className="page page-narrow">
-      <div className="topbar">
-        <div className="hello">
-          Settlement history<b>{settlementCycles.length} cycles</b>
-        </div>
-        <div className="pair">
-          <div className="avatar u1">{currentUserCapitalized[0]}</div>
-          <div className="avatar u2">{otherUserCapitalized[0]}</div>
-        </div>
-      </div>
-
       {settlementCycles.map(([dayLabel, cycleCards]) => {
         const stats = calcCycleStats(cycleCards);
         const latestSettled = cycleCards[0]?.settled_at;
@@ -227,7 +207,9 @@ export default function History({ cards, currentUser }: Props) {
                         ></span>
                         {isTransfer && card.transfer_from && card.transfer_to
                           ? `${card.transfer_from} sent ${card.transfer_to} $${total.toFixed(2)}`
-                          : `${card.paid_by} paid`}
+                          : isProfit
+                            ? `${card.paid_by} collected`
+                            : `${card.paid_by} paid`}
                       </div>
                     </div>
                     <div className={`tx-amt amount ${isTransfer ? "transfer" : isProfit ? "pos" : "neg"}`}>

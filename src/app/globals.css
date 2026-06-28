@@ -543,11 +543,13 @@ input {
 .splitbar .f1 {
   background: var(--grad-sage);
   border-radius: 999px 0 0 999px;
+  width: 50%;
 }
 
 .splitbar .f2 {
   background: var(--grad-sand);
   border-radius: 0 999px 999px 0;
+  width: 50%;
 }
 
 .splitbar .legend {
@@ -1283,4 +1285,70 @@ input {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* ============ REFACTORED UTILITY CLASSES ============ */
+.edit-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text-mid);
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: 12px;
+}
+
+.hero-center {
+  text-align: center;
+}
+
+.filters {
+  margin-top: 8px;
+}
+
+.empty-activity {
+  text-align: center;
+  padding: 48px 24px;
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 8px;
+}
+
+.empty-text {
+  color: var(--text-mid);
+}
+
+.tx-transfer-note {
+  font-weight: normal;
+  font-size: 12px;
+  margin-left: 8px;
+  color: var(--text-mid);
+}
+
+.partner-profit {
+  font-size: 16px;
+  margin-top: 4px;
+}
+
+.partner-note {
+  margin-top: 4px;
+}
+
+.partner-transfers {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-mid);
+}
+
+.empty-title {
+  font-size: 18px;
+  margin-bottom: 4px;
+  color: var(--text-hi);
 }

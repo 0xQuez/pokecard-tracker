@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { getTimeGreeting, userCapitalize } from "@/lib/helpers";
 import Home from "@/components/Home";
 import Activity from "@/components/Activity";
 import Add from "@/components/Add";
@@ -144,8 +145,25 @@ export default function Page() {
   if (!isAuthed) return <ProfileGate onAuth={handleAuth} />;
 
   const otherUser = currentProfile === "quez" ? "stevie" : "quez";
-  const currentUserCapitalized = currentProfile.charAt(0).toUpperCase() + currentProfile.slice(1);
-  const otherUserCapitalized = otherUser.charAt(0).toUpperCase() + otherUser.slice(1);
+  const currentUserCapitalized = userCapitalize(currentProfile);
+  const otherUserCapitalized = userCapitalize(otherUser);
+
+  const settledCyclesCount = (() => {
+    const settledCards = cards.filter((c) => c.settled_at);
+    const cycles = new Set<string>();
+    for (const c of settledCards) {
+      if (!c.settled_at) continue;
+      const date = new Date(c.settled_at);
+      const dayKey = date.toLocaleDateString("en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      });
+      cycles.add(dayKey);
+    }
+    return cycles.size;
+  })();
 
   return (
     <div className="app">
@@ -221,7 +239,7 @@ export default function Page() {
         <section className={`screen ${activeScreen === "home" ? "active" : ""}`} id="screen-home">
           <div className="topbar">
             <div className="hello">
-              Good evening<b>{currentUserCapitalized} &amp; {otherUserCapitalized}</b>
+              {getTimeGreeting()}<b>{currentUserCapitalized} &amp; {otherUserCapitalized}</b>
             </div>
             <div className="pair">
               <div className="avatar u1">{currentUserCapitalized[0]}</div>
@@ -292,6 +310,15 @@ export default function Page() {
 
         {/* History screen */}
         <section className={`screen ${activeScreen === "history" ? "active" : ""}`} id="screen-history">
+          <div className="topbar">
+            <div className="hello">
+              Settlement history<b>{settledCyclesCount} cycles</b>
+            </div>
+            <div className="pair">
+              <div className="avatar u1">{currentUserCapitalized[0]}</div>
+              <div className="avatar u2">{otherUserCapitalized[0]}</div>
+            </div>
+          </div>
           {!loading ? (
             <History cards={cards} currentUser={currentProfile} />
           ) : (
