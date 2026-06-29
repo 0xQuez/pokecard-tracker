@@ -8,10 +8,11 @@ import Activity from "@/components/Activity";
 import Add from "@/components/Add";
 import Settle from "@/components/Settle";
 import History from "@/components/History";
+import PriceLookup from "@/components/PriceLookup";
 import ProfileGate from "@/components/ProfileGate";
 import EditModal from "@/components/EditModal";
 
-type Screen = "home" | "activity" | "add" | "settle" | "history";
+type Screen = "home" | "activity" | "add" | "settle" | "history" | "price";
 type Profile = "quez" | "stevie";
 
 type Card = {
@@ -222,6 +223,17 @@ export default function Page() {
           </svg>
           History
         </button>
+        <button
+          className={`nav-item ${activeScreen === "price" ? "active" : ""}`}
+          onClick={() => goToScreen("price")}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 6v12" />
+            <path d="M8 10c0-1.1.9-2 2-2h4a2 2 0 010 4h-4a2 2 0 00-2 2h8" />
+          </svg>
+          Prices
+        </button>
         <div className="sidebar-foot">
           <p>
             <strong>{currentUserCapitalized} &amp; {otherUserCapitalized}</strong>
@@ -327,6 +339,17 @@ export default function Page() {
             </div>
           )}
         </section>
+
+        {/* Price screen */}
+        <section className={`screen ${activeScreen === "price" ? "active" : ""}`} id="screen-price">
+          {!loading ? (
+            <PriceLookup />
+          ) : (
+            <div className="page page-narrow" style={{ textAlign: "center", paddingTop: 100 }}>
+              <p className="text-gray-500">Loading...</p>
+            </div>
+          )}
+        </section>
       </main>
 
       {/* Mobile tab bar */}
@@ -379,6 +402,17 @@ export default function Page() {
             <circle cx="12" cy="12" r="10" />
           </svg>
           History
+        </button>
+        <button
+          className={`tab ${activeScreen === "price" ? "active" : ""}`}
+          onClick={() => goToScreen("price")}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 6v12" />
+            <path d="M8 10c0-1.1.9-2 2-2h4a2 2 0 010 4h-4a2 2 0 00-2 2h8" />
+          </svg>
+          Prices
         </button>
       </nav>
 
