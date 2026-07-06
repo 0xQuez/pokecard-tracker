@@ -32,7 +32,7 @@ async function firecrawlScrape(url: string): Promise<string | null> {
 function parseCondition(text: string): string | null {
   const t = text.toLowerCase();
   if (/(near mint|mint|brand new|sealed)/.test(t)) return "NM";
-  if (/(lightly played|lp|very good)/.test(t)) return "LP";
+  if (/(lightly played|lp|very good|pre-owned|preowned)/.test(t)) return "LP";
   if (/(moderately played|mp|good)/.test(t)) return "MP";
   if (/(heavily played|hp|acceptable)/.test(t)) return "HP";
   if (/(damaged|for parts)/.test(t)) return "DMG";
@@ -41,14 +41,57 @@ function parseCondition(text: string): string | null {
 
 function parseSoldListings(content: string, limit: number): PricePoint[] {
   const results: PricePoint[] = [];
+
+  // Try table format first: eBay renders results in a table with
+  // Item, Price, Condition columns. Firecrawl turns markdown tables
+  // into rows starting with "| Item | Price | Condition |".
+  const tableRows = content.match(/^\|((?!\s*[-:]+\s*\|).*?)\|/gm);
+  if (tableRows) {
+    for (const row of tableRows) {
+      // Skip header and separator rows
+      if (/\|\s*Item\s*\|/i.test(row)) continue;
+      if (/\|[\s-:]+\|/.test(row)) continue;
+
+      const cells = row.split("|").map(c => c.trim()).filter(Boolean);
+      if (cells.length < 2) continue;
+
+      const priceMatch = row.match(/\$([\d,.]+)/);
+      if (!priceMatch) continue;
+
+      const price = parseFloat(priceMatch[1].replace(/,/g, ""));
+      if (isNaN(price)) continue;
+
+      // Condition is usually in the last cell; look for known keywords
+      const condMatch = row.match(
+        /(?:Brand New|New|Pre-Owned|Very Good|Good|Acceptable|Lightly Played|Heavily Played|Moderately Played|Near Mint|Preowned)/i
+      );
+
+      // Item title is the first cell
+      const _itemCell = cells[0];
+      void _itemCell;
+
+      results.push({
+        source: "ebay" as const,
+        priceUsd: price,
+        condition: (condMatch ? parseCondition(condMatch[0]) : null) as any,
+        url: null,
+        date: null,
+        isSoldPrice: true,
+      });
+
+      if (results.length >= limit) break;
+    }
+    return results;
+  }
+
+  // Fallback: parse as free-form blocks (legacy markdown without tables)
   const blocks = content.split(/\n\n+/);
   for (const block of blocks) {
     const priceMatch = block.match(/\$([\d,.]+)/);
-    const soldMatch = block.match(/sold/i);
     const condMatch = block.match(
-      /(?:Brand New|New|Very Good|Good|Acceptable|Lightly Played|Heavily Played|Moderately Played|Near Mint)/i
+      /(?:Brand New|New|Pre-Owned|Very Good|Good|Acceptable|Lightly Played|Heavily Played|Moderately Played|Near Mint|Preowned)/i
     );
-    if (priceMatch && soldMatch) {
+    if (priceMatch) {
       const price = parseFloat(priceMatch[1].replace(/,/g, ""));
       if (isNaN(price)) continue;
       results.push({
@@ -60,6 +103,7 @@ function parseSoldListings(content: string, limit: number): PricePoint[] {
         isSoldPrice: true,
       });
     }
+    if (results.length >= limit) break;
   }
-  return results.slice(0, limit);
+  return results;
 }

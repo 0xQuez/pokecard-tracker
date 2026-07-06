@@ -15,7 +15,7 @@ export async function getCachedTCGPrices(
     .gte("fetched_at", new Date(Date.now() - CACHE_TTL_MS_TCGP).toISOString())
     .order("fetched_at", { ascending: false })
     .limit(1)
-    .single<DbCardPrice>();
+    .maybeSingle();
 
   if (!data) return null;
 
@@ -37,7 +37,7 @@ export async function getCachedEbayPrices(
     .gte("fetched_at", new Date(Date.now() - CACHE_TTL_MS_EBAY).toISOString())
     .order("fetched_at", { ascending: false })
     .limit(1)
-    .single<DbCardPrice>();
+    .maybeSingle();
 
   if (!data) return null;
 

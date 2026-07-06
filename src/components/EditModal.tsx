@@ -55,7 +55,7 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("card");
   const [payer, setPayer] = useState<"quez" | "stevie">(currentUser);
-  const [transferDirection, setTransferDirection] = useState<"quez_to_stevie" | "stevie_to_quez">("quez_to_stevie");
+  const [transferDirection, setTransferDirection] = useState<"current_to_other" | "other_to_current">("current_to_other");
   const [saleSplit, setSaleSplit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -77,7 +77,7 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
         setCategory("sale");
       } else if (isTransferCard) {
         setCategory("transfer");
-        setTransferDirection(card.transfer_from === currentUserCapitalized ? "quez_to_stevie" : "stevie_to_quez");
+        setTransferDirection(card.transfer_from === currentUserCapitalized ? "current_to_other" : "other_to_current");
       } else {
         setCategory("card");
       }
@@ -150,8 +150,8 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
       cardData.sale_price = amountValue;
       cardData.date_sold = card.date_sold || new Date().toISOString().split("T")[0];
     } else if (isTransfer) {
-      cardData.transfer_from = transferDirection === "quez_to_stevie" ? "Quez" : "Stevie";
-      cardData.transfer_to = transferDirection === "quez_to_stevie" ? "Stevie" : "Quez";
+      cardData.transfer_from = transferDirection === "current_to_other" ? currentUserCapitalized : otherUserCapitalized;
+      cardData.transfer_to = transferDirection === "current_to_other" ? otherUserCapitalized : currentUserCapitalized;
       cardData.transfer_amount = amountValue;
     } else if (category === "grading") {
       cardData.grading_fee = amountValue;
@@ -327,16 +327,16 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
               <div className="payer-toggle" id="transfer-direction-row">
                 <button
                   type="button"
-                  className={`payer ${transferDirection === "quez_to_stevie" ? "on" : ""}`}
-                  onClick={() => setTransferDirection("quez_to_stevie")}
+                  className={`payer ${transferDirection === "current_to_other" ? "on" : ""}`}
+                  onClick={() => setTransferDirection("current_to_other")}
                 >
                   <span className="avatar u1">{currentUserCapitalized[0]}</span>
                   {currentUserCapitalized} → {otherUserCapitalized}
                 </button>
                 <button
                   type="button"
-                  className={`payer ${transferDirection === "stevie_to_quez" ? "on" : ""}`}
-                  onClick={() => setTransferDirection("stevie_to_quez")}
+                  className={`payer ${transferDirection === "other_to_current" ? "on" : ""}`}
+                  onClick={() => setTransferDirection("other_to_current")}
                 >
                   <span className="avatar u2">{otherUserCapitalized[0]}</span>
                   {otherUserCapitalized} → {currentUserCapitalized}

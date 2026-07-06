@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { calcTotal, userCapitalize } from "@/lib/helpers";
+import { userCapitalize } from "@/lib/helpers";
+import { calcSettlementBreakdown } from "@/lib/settlement";
 
 type Card = {
   id: number;
@@ -44,90 +45,8 @@ export default function Settle({ cards, currentUser, onSettle, onRefresh }: Prop
   const [settling, setSettling] = useState(false);
 
   const breakdown = useMemo(() => {
-    let currentUserExpensesPaid = 0;
-    let otherUserExpensesPaid = 0;
-    let currentUserProfitCollected = 0;
-    let otherUserProfitCollected = 0;
-    let currentUserTransferAdjustment = 0;
-    let totalExpenses = 0;
-    let totalProfits = 0;
-
     const activeCards = cards.filter((c) => !c.settled_at);
-
-    for (const c of activeCards) {
-      const total = calcTotal(c);
-      const isTransfer = c.type === "transfer";
-      const isProfit = c.type === "profit" || c.sale_price;
-
-      if (isTransfer) {
-        if (c.transfer_from === currentUserCapitalized) {
-          currentUserTransferAdjustment -= total;
-        } else if (c.transfer_to === currentUserCapitalized) {
-          currentUserTransferAdjustment += total;
-        }
-      } else if (isProfit) {
-        const profit = c.sale_price || total;
-        if (c.paid_by === "Both") {
-          currentUserProfitCollected += profit / 2;
-          otherUserProfitCollected += profit / 2;
-        } else if (c.paid_by === currentUserCapitalized) {
-          currentUserProfitCollected += profit;
-        } else {
-          otherUserProfitCollected += profit;
-        }
-        totalProfits += profit;
-      } else {
-        if (c.paid_by === currentUserCapitalized) {
-          currentUserExpensesPaid += total;
-        } else if (c.paid_by === otherUserCapitalized) {
-          otherUserExpensesPaid += total;
-        } else {
-          const currentUserShare = total * (c.split_percent / 100);
-          const otherUserShare = total * ((100 - c.split_percent) / 100);
-          currentUserExpensesPaid += currentUserShare;
-          otherUserExpensesPaid += otherUserShare;
-        }
-        totalExpenses += total;
-      }
-    }
-
-    const currentUserNet = currentUserExpensesPaid - currentUserProfitCollected;
-    const otherUserNet = otherUserExpensesPaid - otherUserProfitCollected;
-    const totalNetSpent = currentUserNet + otherUserNet;
-    const fairShareEach = totalNetSpent / 2;
-
-    const currentUserBalance = currentUserNet - fairShareEach + currentUserTransferAdjustment;
-    const otherUserBalance = otherUserNet - fairShareEach - currentUserTransferAdjustment;
-
-    let owesAmount = 0;
-    let owesDirection = "";
-
-    if (currentUserBalance >= 0 && otherUserBalance <= 0) {
-      owesAmount = Math.abs(otherUserBalance);
-      owesDirection = "they_owe";
-    } else if (otherUserBalance >= 0 && currentUserBalance <= 0) {
-      owesAmount = Math.abs(currentUserBalance);
-      owesDirection = "you_owe";
-    } else {
-      owesDirection = "even";
-    }
-
-    return {
-      currentUserExpensesPaid,
-      otherUserExpensesPaid,
-      currentUserProfitCollected,
-      otherUserProfitCollected,
-      currentUserBalance,
-      otherUserBalance,
-      owesAmount,
-      owesDirection,
-      totalExpenses,
-      totalProfits,
-      totalNetSpent,
-      fairShareEach,
-      activeCount: activeCards.length,
-      currentUserTransferAdjustment,
-    };
+    return calcSettlementBreakdown(activeCards, currentUser);
   }, [cards, currentUser]);
 
   const handleSettle = async () => {

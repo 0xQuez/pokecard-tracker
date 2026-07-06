@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { calcTotal, userCapitalize } from "@/lib/helpers";
+import { calcSettlementBreakdown } from "@/lib/settlement";
 
 type Card = {
   id: number;
@@ -76,71 +77,8 @@ export default function History({ cards, currentUser }: Props) {
   }, [settledCards]);
 
   const calcCycleStats = (cycleCards: Card[]) => {
-    let currentUserExpensesPaid = 0;
-    let otherUserExpensesPaid = 0;
-    let currentUserProfitCollected = 0;
-    let otherUserProfitCollected = 0;
-    let totalExpenses = 0;
-    let totalProfits = 0;
-    let currentUserTransferAdjustment = 0;
-
-    for (const c of cycleCards) {
-      const total = calcTotal(c);
-      const isProfit = c.type === "profit" || c.sale_price;
-      const isTransfer = c.type === "transfer";
-
-      if (isTransfer) {
-        if (c.transfer_from === currentUserCapitalized) {
-          currentUserTransferAdjustment -= total;
-        } else if (c.transfer_to === currentUserCapitalized) {
-          currentUserTransferAdjustment += total;
-        }
-      } else if (isProfit) {
-        const profit = c.sale_price || total;
-        if (c.paid_by === "Both") {
-          currentUserProfitCollected += profit / 2;
-          otherUserProfitCollected += profit / 2;
-        } else if (c.paid_by === currentUserCapitalized) {
-          currentUserProfitCollected += profit;
-        } else {
-          otherUserProfitCollected += profit;
-        }
-        totalProfits += profit;
-      } else {
-        if (c.paid_by === "Both") {
-          currentUserExpensesPaid += total * (c.split_percent / 100);
-          otherUserExpensesPaid += total * ((100 - c.split_percent) / 100);
-        } else if (c.paid_by === currentUserCapitalized) {
-          currentUserExpensesPaid += total;
-        } else {
-          otherUserExpensesPaid += total;
-        }
-        totalExpenses += total;
-      }
-    }
-
-    const currentUserNet = currentUserExpensesPaid - currentUserProfitCollected;
-    const otherUserNet = otherUserExpensesPaid - otherUserProfitCollected;
-    const totalNetSpent = currentUserNet + otherUserNet;
-    const fairShareEach = totalNetSpent / 2;
-
-    const currentUserBalance = currentUserNet - fairShareEach + currentUserTransferAdjustment;
-    const otherUserBalance = otherUserNet - fairShareEach - currentUserTransferAdjustment;
-
     return {
-      currentUserExpensesPaid,
-      otherUserExpensesPaid,
-      currentUserProfitCollected,
-      otherUserProfitCollected,
-      currentUserNet,
-      otherUserNet,
-      currentUserBalance,
-      otherUserBalance,
-      totalExpenses,
-      totalProfits,
-      totalNetSpent,
-      fairShareEach,
-      currentUserTransferAdjustment,
+      ...calcSettlementBreakdown(cycleCards, currentUser),
       count: cycleCards.length,
     };
   };

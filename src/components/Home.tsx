@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
-import { calcTotal, formatDate, getDayLabel, userCapitalize } from "@/lib/helpers";
+import { calcTotal, formatDate, userCapitalize } from "@/lib/helpers";
+import { calcSettlementBreakdown } from "@/lib/settlement";
 
 type Card = {
   id: number;
@@ -40,121 +41,32 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
   const otherUserCapitalized = userCapitalize(otherUser);
 
   const breakdown = useMemo(() => {
-    // Expenses track who paid
-    let currentUserExpensesPaid = 0;
-    let otherUserExpensesPaid = 0;
-
-    // Profits track who collected (reduces their "net spent")
-    let currentUserProfitCollected = 0;
-    let otherUserProfitCollected = 0;
-
-    // Transfers: direct cash flows
-    let currentUserTransferAdjustment = 0;
-    let currentUserTransfersGiven = 0;
-    let currentUserTransfersReceived = 0;
-
-    let totalExpenses = 0;
-    let totalProfits = 0;
+    const settlement = calcSettlementBreakdown(cards, currentUser);
     let totalGraded = 0;
     let totalSold = 0;
 
     for (const c of cards) {
-      const total = calcTotal(c);
       const isTransfer = c.type === "transfer";
       const isProfit = c.type === "profit" || c.sale_price;
 
-      if (isTransfer) {
-        if (c.transfer_from === currentUserCapitalized) {
-          currentUserTransferAdjustment -= total;
-          currentUserTransfersGiven += total;
-        } else if (c.transfer_to === currentUserCapitalized) {
-          currentUserTransferAdjustment += total;
-          currentUserTransfersReceived += total;
-        }
-      } else if (isProfit) {
-        const profit = c.sale_price || total;
-        // Sale: profit is REVENUE for whoever collected
-        if (c.paid_by === "Both") {
-          // Cash was split equally
-          currentUserProfitCollected += profit / 2;
-          otherUserProfitCollected += profit / 2;
-        } else if (c.paid_by === currentUserCapitalized) {
-          currentUserProfitCollected += profit;
-        } else {
-          otherUserProfitCollected += profit;
-        }
-        totalProfits += profit;
+      if (isProfit) {
         if (c.sale_price) totalSold++;
-      } else {
-        // Expense: whoever paid gets the full amount added
-        if (c.paid_by === currentUserCapitalized) {
-          currentUserExpensesPaid += total;
-        } else if (c.paid_by === otherUserCapitalized) {
-          otherUserExpensesPaid += total;
-        } else {
-          // Both paid their split share
-          const currentUserShare = total * (c.split_percent / 100);
-          const otherUserShare = total * ((100 - c.split_percent) / 100);
-          currentUserExpensesPaid += currentUserShare;
-          otherUserExpensesPaid += otherUserShare;
-        }
-        totalExpenses += total;
+      } else if (!isTransfer) {
         if (c.grading_fee > 0 || c.shipping_to_grader > 0 || c.shipping_from_grader > 0 || c.insurance > 0) {
           totalGraded++;
         }
       }
     }
 
-    // Net spent = expenses paid - profit collected (per person)
-    const currentUserNet = currentUserExpensesPaid - currentUserProfitCollected;
-    const otherUserNet = otherUserExpensesPaid - otherUserProfitCollected;
-    const totalNetSpent = currentUserNet + otherUserNet;
-    const fairShareEach = totalNetSpent / 2;
-
-    // Balance = net spent - fair share
-    // Positive = overpaid (owed money), Negative = underpaid (owes money)
-    const currentUserBalance = currentUserNet - fairShareEach + currentUserTransferAdjustment;
-    const otherUserBalance = otherUserNet - fairShareEach - currentUserTransferAdjustment;
-
-    let owesAmount = 0;
-    let owesDirection = "";
-
-    if (currentUserBalance >= 0 && otherUserBalance <= 0) {
-      owesAmount = Math.abs(otherUserBalance);
-      owesDirection = "they_owe";
-    } else if (otherUserBalance >= 0 && currentUserBalance <= 0) {
-      owesAmount = Math.abs(currentUserBalance);
-      owesDirection = "you_owe";
-    } else {
-      owesDirection = "even";
-    }
-
-    const splitAmount = fairShareEach;
-
     const recent = [...cards]
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, 5);
 
     return {
-      currentUserExpensesPaid,
-      otherUserExpensesPaid,
-      currentUserProfitCollected,
-      otherUserProfitCollected,
-      currentUserNet,
-      otherUserNet,
-      currentUserBalance,
-      otherUserBalance,
-      currentUserTransferAdjustment,
-      owesAmount,
-      owesDirection,
-      totalNetSpent,
-      totalExpenses,
-      totalProfits,
+      ...settlement,
       totalGraded,
       totalSold,
-      splitAmount,
-      currentUserTransfersGiven,
-      currentUserTransfersReceived,
+      splitAmount: settlement.fairShareEach,
       recent,
     };
   }, [cards, currentUser]);
@@ -175,37 +87,24 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
     <div className="page">
       <div className="desk-grid">
         <div>
-          <div className="hero">
-            <div className="label">Shared balance</div>
-            <div className="big amount">${breakdown.totalNetSpent.toFixed(2)}</div>
-            <div className="sub">
-              {breakdown.owesDirection === "they_owe" && (
-                <>
-                  {otherUserCapitalized} owes you <b>${breakdown.owesAmount.toFixed(2)}</b>
-                </>
-              )}
-              {breakdown.owesDirection === "you_owe" && (
-                <>
-                  You owe {otherUserCapitalized} <b>${breakdown.owesAmount.toFixed(2)}</b>
-                </>
-              )}
-              {breakdown.owesDirection === "even" && <b>All even</b>}
+          <div className="hero settle-hero" style={{ padding: "34px 24px", textAlign: "center", background: "var(--grad-hero)", borderRadius: "var(--r-xl)" }}>
+            <div className="label" style={{ fontSize: 13, color: "var(--text-low)", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".08em" }}>Who owes what</div>
+            <div className="settle-flow" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 8 }}>
+              <div className="avatar u2" style={{ width: 40, height: 40, fontSize: 18 }}>{otherUserCapitalized[0]}</div>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ width: 28, height: 28, color: "var(--text-low)" }}>
+                {breakdown.owesDirection === "they_owe" && <><path d="M4 12h15" /><path d="M14 6l6 6-6 6" /></>}
+                {breakdown.owesDirection === "you_owe" && <><path d="M7 16l-4-4 4-4" /><path d="M3 12h13" /><path d="M17 8l4 4-4 4" /></>}
+                {breakdown.owesDirection === "even" && <><path d="M5 12h14" /><path d="M12 5l7 7-7 7" /></>}
+              </svg>
+              <div className="avatar u1" style={{ width: 40, height: 40, fontSize: 18 }}>{currentUserCapitalized[0]}</div>
             </div>
-            <div className="splitbar">
-              <div className="track">
-                <div className="f1"></div>
-                <div className="f2"></div>
-              </div>
-              <div className="legend">
-                <span>
-                  <span className="dot u1"></span>
-                  {currentUserCapitalized} · <span className="amount">${breakdown.splitAmount.toFixed(2)}</span>
-                </span>
-                <span>
-                  <span className="dot u2"></span>
-                  {otherUserCapitalized} · <span className="amount">${breakdown.splitAmount.toFixed(2)}</span>
-                </span>
-              </div>
+            <div className="owes" style={{ fontSize: 14, color: "var(--text-mid)", marginBottom: 4 }}>
+              {breakdown.owesDirection === "they_owe" && <>{otherUserCapitalized} owes {currentUserCapitalized}</>}
+              {breakdown.owesDirection === "you_owe" && <>{currentUserCapitalized} owes {otherUserCapitalized}</>}
+              {breakdown.owesDirection === "even" && <>All even</>}
+            </div>
+            <div className="big amount" style={{ fontSize: 42, fontWeight: 600, lineHeight: 1.15 }}>
+              ${breakdown.owesAmount.toFixed(2)}
             </div>
           </div>
 
@@ -220,6 +119,14 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
               <div className="v pos amount">${breakdown.totalProfits.toFixed(2)}</div>
               <div className="d">{breakdown.totalSold} sold</div>
             </div>
+          </div>
+
+          <div className="card stat" style={{ marginBottom: 16 }}>
+            <div className="k">Shared P&amp;L</div>
+            <div className={`v amount ${breakdown.totalNetSpent >= 0 ? "pos" : "neg"}`} style={{ fontSize: 28 }}>
+              {breakdown.totalNetSpent >= 0 ? "+" : "−"}${Math.abs(breakdown.totalNetSpent).toFixed(2)}
+            </div>
+            <div className="d">Net of expenses minus sales</div>
           </div>
 
           <div className="partners">

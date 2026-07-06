@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "test:settlement": "node scripts/test-settlement.mjs",
     "start": "next start",
     "lint": "eslint"
   },
