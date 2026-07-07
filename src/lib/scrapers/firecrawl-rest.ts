@@ -4,6 +4,10 @@
 const API_BASE = "https://api.firecrawl.dev/v1";
 const API_KEY = process.env.FIRECRAWL_API_KEY || "";
 
+function authHeader(apiKey: string): string {
+  return `Bearer ${apiKey}`;
+}
+
 export async function firecrawlScrape(url: string): Promise<string | null> {
   if (!API_KEY) {
     console.warn("FIRECRAWL_API_KEY not set — skipping scrape for", url);
@@ -15,7 +19,7 @@ export async function firecrawlScrape(url: string): Promise<string | null> {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${API_KEY}`,
+        Authorization: authHeader(API_KEY),
       },
       body: JSON.stringify({
         url,
