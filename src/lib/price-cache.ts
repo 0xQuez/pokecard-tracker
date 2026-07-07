@@ -1,5 +1,5 @@
 import { supabase, DbCardPrice } from "./supabaseClient";
-import { CardIdentity, PricePoint } from "./models";
+import { CardIdentity, PricePoint, PsaPriceData } from "./models";
 
 const CACHE_TTL_MS_TCGP = 60 * 60 * 1000; // 1 hour
 const CACHE_TTL_MS_EBAY = 24 * 60 * 60 * 1000; // 24 hours
@@ -77,4 +77,36 @@ export async function cacheEbayPrices(
       fetched_at: new Date().toISOString(),
     });
   }
+}
+
+// PSA graded price cache (stored as a single JSON blob per card)
+export async function getCachedPsaPrices(
+  cardName: string
+): Promise<PsaPriceData[] | null> {
+  const { data } = await supabase
+    .from("card_prices")
+    .select("*")
+    .eq("source", "psa")
+    .eq("card_name", cardName)
+    .gte("fetched_at", new Date(Date.now() - CACHE_TTL_MS_EBAY).toISOString())
+    .order("fetched_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!data) return null;
+  const raw = data.raw_data as any;
+  return raw?.psaPrices ?? null;
+}
+
+export async function cachePsaPrices(
+  cardName: string,
+  psaPrices: PsaPriceData[]
+) {
+  await supabase.from("card_prices").insert({
+    card_name: cardName,
+    source: "psa",
+    price_usd: psaPrices[0]?.avgSold ?? 0,
+    raw_data: { psaPrices },
+    fetched_at: new Date().toISOString(),
+  });
 }

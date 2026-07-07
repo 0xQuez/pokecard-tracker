@@ -1,8 +1,5 @@
-import FirecrawlApp from "@mendable/firecrawl-js";
+import { firecrawlScrape } from "./firecrawl-rest";
 import { CardIdentity, PricePoint } from "../models";
-
-const FIRECRAWL_API_KEY = process.env.FIRECRAWL_API_KEY || "";
-const app = FIRECRAWL_API_KEY ? new FirecrawlApp({ apiKey: FIRECRAWL_API_KEY }) : null;
 
 // ── Progressive search: broaden query if exact match returns nothing ─────────
 
@@ -12,14 +9,14 @@ function broadenedQueries(raw: string): string[] {
   const steps = new Set<string>();
   steps.add(q);
 
-  // Step 1: remove grading qualifiers (PSA, BGS, CGC, SGC + number)
+  // Step 1: remove grading qualifiers
   let next = q
     .replace(/\b(psa|bgs|cgc|sgc)\s*\d+\b/gi, "")
     .replace(/\b(graded|ungraded|raw)\b/gi, "")
     .trim();
   if (next.length > 2) steps.add(next);
 
-  // Step 2: remove finish qualifiers (Reverse Holo, Holo, Foil, etc.)
+  // Step 2: remove finish qualifiers
   next = next
     .replace(/\breverse\s*(holo|foil)\b/gi, "")
     .replace(/\b(holo(gra)?phic|foil|non[-\s]?holo|full[-\s]?art)\b/gi, "")
@@ -35,7 +32,7 @@ function broadenedQueries(raw: string): string[] {
     .trim();
   if (next.length > 2) steps.add(next);
 
-  // Step 4: remove common Pokémon TCG set names (single pass, longest first)
+  // Step 4: remove common Pokémon TCG set names
   const setNames = [
     /\bscarlet\s+(&\s+|and\s+)?violet\b/gi,
     /\bsword\s+(&\s+|and\s+)?shield\b/gi,
@@ -132,7 +129,6 @@ function broadenedQueries(raw: string): string[] {
       next = after;
     }
   }
-  // Ensure the final stripped version is captured even if no sets matched
   if (beforeSets !== q && beforeSets.length > 2) {
     steps.add(beforeSets);
   }
@@ -144,7 +140,9 @@ function broadenedQueries(raw: string): string[] {
   return Array.from(steps);
 }
 
-export async function searchCards(query: string): Promise<(CardIdentity & { marketPrice?: number })[]> {
+export async function searchCards(
+  query: string
+): Promise<(CardIdentity & { marketPrice?: number })[]> {
   const queries = broadenedQueries(query);
   if (queries.length === 0) return [];
 
@@ -173,20 +171,6 @@ export async function getMarketPrice(productId: number): Promise<{
   return parsePricePage(content);
 }
 
-async function firecrawlScrape(url: string): Promise<string | null> {
-  if (!app) return null;
-  try {
-    const doc = await app.scrapeUrl(url, {
-      formats: ["markdown"],
-      onlyMainContent: true,
-    });
-    return doc?.markdown || null;
-  } catch (e) {
-    console.error("Firecrawl scrape failed:", e);
-    return null;
-  }
-}
-
 // ── Search result parsing ────────────────────────────────────────────────────
 
 interface RawSearchResult {
@@ -199,7 +183,7 @@ interface RawSearchResult {
 function parseSearchResults(content: string): CardIdentity[] {
   const dedupe = new Map<string, RawSearchResult>();
 
-  // Strategy 1: markdown table rows (TCGPlayer renders search results as tables)
+  // Strategy 1: markdown table rows
   const tableRows = extractTableRows(content);
   for (const row of tableRows) {
     const item = extractFromTableRow(row);
@@ -208,7 +192,7 @@ function parseSearchResults(content: string): CardIdentity[] {
     }
   }
 
-  // Strategy 2: paragraph / block-level parsing for non-table layouts
+  // Strategy 2: paragraph / block-level parsing
   if (dedupe.size === 0) {
     const blocks = content.split(/\n\s*\n/);
     for (const block of blocks) {
@@ -219,7 +203,7 @@ function parseSearchResults(content: string): CardIdentity[] {
     }
   }
 
-  // Strategy 3: line-by-line fallback with look-ahead for prices
+  // Strategy 3: line-by-line fallback
   if (dedupe.size === 0) {
     const lines = content.split(/\n/);
     for (let i = 0; i < lines.length; i++) {
@@ -238,8 +222,6 @@ function parseSearchResults(content: string): CardIdentity[] {
     marketPrice: r.marketPrice ?? undefined,
   }));
 }
-
-// ── Extraction helpers ───────────────────────────────────────────────────────
 
 function extractTableRows(content: string): string[][] {
   const rows: string[][] = [];
@@ -265,19 +247,16 @@ function extractFromTableRow(cells: string[]): RawSearchResult | null {
   let marketPrice: number | null = null;
 
   for (const cell of cells) {
-    // Look for a TCGPlayer product link
     const linkMatch = cell.match(/\[([^\]]+)\]\([^)]*\/product\/(\d+)[^)]*\)/);
     if (linkMatch && !name) {
       name = linkMatch[1].trim();
       productId = linkMatch[2];
     }
 
-    // Heuristic: cell that looks like a set name (no price, no link, not rarity/number, reasonable length)
     if (!setName && isLikelySetName(cell)) {
       setName = cell;
     }
 
-    // Extract price, preferring "Market" label
     if (marketPrice === null) {
       marketPrice = extractLabeledPrice(cell, /market/i) ?? extractFirstPrice(cell);
     }
@@ -323,9 +302,9 @@ function extractFromLine(line: string, nextLine: string): RawSearchResult | null
 function isLikelySetName(cell: string): boolean {
   const trimmed = cell.trim();
   if (!trimmed || trimmed.length < 3 || trimmed.length > 60) return false;
-  if (/[\$\[\]]/.test(trimmed)) return false; // no prices / links
-  if (/^\d{1,3}\/\d{1,3}[a-z]?$/i.test(trimmed)) return false; // card number like 25/102
-  if (/^\d+$/.test(trimmed)) return false; // pure number
+  if (/[\$\[\]]/.test(trimmed)) return false;
+  if (/^\d{1,3}\/\d{1,3}[a-z]?$/i.test(trimmed)) return false;
+  if (/^\d+$/.test(trimmed)) return false;
   const rarityWords = /\b(common|uncommon|rare|holo rare|secret rare|ultra rare|promo|shiny|basic|stage 1|stage 2|vstar|vmax|ex|gx|v)\b/i;
   if (rarityWords.test(trimmed)) return false;
   return true;
@@ -360,23 +339,18 @@ function parsePricePage(content: string) {
   let listedMedian: number | null = null;
 
   for (const line of lines) {
-    const lower = line.toLowerCase();
-
-    // "Normal Market Price: $123.45" or just "Normal Market Price $123.45"
     const nm = line.match(/Normal\s+Market\s*Price[:\s$]*([\d,.]+)/i);
     if (nm) normalMarket = cleanPrice(nm[1]);
 
-    // "Foil Market Price: $123.45"
     const fm = line.match(/Foil\s+Market\s*Price[:\s$]*([\d,.]+)/i);
     if (fm) foilMarket = cleanPrice(fm[1]);
 
-    // "Listed Median (Near Mint): $123.45" or "Listed Median (NM): $123.45"
     const lm = line.match(/Listed\s+Median\s*\((?:Near\s+Mint|NM)\)[:\s$]*([\d,.]+)/i);
     if (lm) listedMedian = cleanPrice(lm[1]);
 
-    // Also catch "Listed Median: $123.45" as a weaker fallback
     if (listedMedian === null) {
       const lm2 = line.match(/Listed\s+Median[:\s$]*([\d,.]+)/i);
+      const lower = line.toLowerCase();
       if (lm2 && !lower.includes("normal market") && !lower.includes("foil market")) {
         listedMedian = cleanPrice(lm2[1]);
       }

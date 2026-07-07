@@ -8,11 +8,11 @@ import Activity from "@/components/Activity";
 import Add from "@/components/Add";
 import Settle from "@/components/Settle";
 import History from "@/components/History";
-import PriceLookup from "@/components/PriceLookup";
+import HunterTool from "@/components/HunterTool";
 import ProfileGate from "@/components/ProfileGate";
 import EditModal from "@/components/EditModal";
 
-type Screen = "home" | "activity" | "add" | "settle" | "history" | "price";
+type Screen = "home" | "activity" | "add" | "settle" | "history" | "hunter";
 type Profile = "quez" | "stevie";
 
 type Card = {
@@ -224,15 +224,18 @@ export default function Page() {
           History
         </button>
         <button
-          className={`nav-item ${activeScreen === "price" ? "active" : ""}`}
-          onClick={() => goToScreen("price")}
+          className={`nav-item ${activeScreen === "hunter" ? "active" : ""}`}
+          onClick={() => goToScreen("hunter")}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M12 6v12" />
-            <path d="M8 10c0-1.1.9-2 2-2h4a2 2 0 010 4h-4a2 2 0 00-2 2h8" />
+            <path d="M12 2a10 10 0 0 1 10 10 10 10 0 0 1-10 10 10 10 0 0 1-10-10 10 10 0 0 1 10-10z" />
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 2v4" />
+            <path d="M12 18v4" />
+            <path d="M2 12h4" />
+            <path d="M18 12h4" />
           </svg>
-          Prices
+          Hunter
         </button>
         <div className="sidebar-foot">
           <p>
@@ -340,10 +343,10 @@ export default function Page() {
           )}
         </section>
 
-        {/* Price screen */}
-        <section className={`screen ${activeScreen === "price" ? "active" : ""}`} id="screen-price">
+        {/* Hunter tool screen */}
+        <section className={`screen ${activeScreen === "hunter" ? "active" : ""}`} id="screen-hunter">
           {!loading ? (
-            <PriceLookup />
+            <HunterTool />
           ) : (
             <div className="page page-narrow" style={{ textAlign: "center", paddingTop: 100 }}>
               <p className="text-gray-500">Loading...</p>
@@ -404,15 +407,18 @@ export default function Page() {
           History
         </button>
         <button
-          className={`tab ${activeScreen === "price" ? "active" : ""}`}
-          onClick={() => goToScreen("price")}
+          className={`tab ${activeScreen === "hunter" ? "active" : ""}`}
+          onClick={() => goToScreen("hunter")}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M12 6v12" />
-            <path d="M8 10c0-1.1.9-2 2-2h4a2 2 0 010 4h-4a2 2 0 00-2 2h8" />
+            <path d="M12 2a10 10 0 0 1 10 10 10 10 0 0 1-10 10 10 10 0 0 1-10-10 10 10 0 0 1 10-10z" />
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 2v4" />
+            <path d="M12 18v4" />
+            <path d="M2 12h4" />
+            <path d="M18 12h4" />
           </svg>
-          Prices
+          Hunter
         </button>
       </nav>
 
