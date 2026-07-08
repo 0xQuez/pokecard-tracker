@@ -1,35 +1,96 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import WeeklyHunt from "@/components/WeeklyHunt";
 import type { CardPriceResult, CardIdentity, CardRarity, CardCondition, CardEdition, GradeLevel } from "@/lib/models";
 
-type FilterKey = "rarity" | "condition" | "edition" | "graded";
-
-const RARITIES: CardRarity[] = [
-  "common",
-  "rare",
-  "reverse holo",
-  "holo rare",
-  "ultra rare",
-  "secret rare",
-];
-const CONDITIONS: CardCondition[] = ["NM", "LP", "MP", "HP", "DMG"];
-const EDITIONS: CardEdition[] = [
-  "1st Edition",
-  "Unlimited",
-  "shadowless",
-  "no rarity symbol",
-  "4th print",
-];
-const GRADES: GradeLevel[] = ["PSA 6", "PSA 7", "PSA 8", "PSA 9", "PSA 10"];
-
 export default function HunterTool() {
+  const [activeTab, setActiveTab] = useState<"search" | "weekly">("search");
+  return (
+    <div className="page page-narrow">
+      <div className="topbar">
+        <div className="hello">
+          HunterTool
+          <b>Find cards worth buying &amp; grading</b>
+        </div>
+        <div className="pair">
+          <div className="avatar u1">Q</div>
+          <div className="avatar u2">S</div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 8, marginTop: 12, marginBottom: 4 }}>
+        <button
+          onClick={() => setActiveTab("search")}
+          style={{
+            flex: 1,
+            padding: "10px 0",
+            borderRadius: 8,
+            border: "1px solid",
+            borderColor: activeTab === "search" ? "var(--ink)" : "var(--border)",
+            background: activeTab === "search" ? "var(--ink)" : "transparent",
+            color: activeTab === "search" ? "#fff" : "var(--text-mid)",
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: "pointer",
+            transition: "all 0.15s ease",
+          }}
+        >
+          🔍 Search &amp; Calc
+        </button>
+        <button
+          onClick={() => setActiveTab("weekly")}
+          style={{
+            flex: 1,
+            padding: "10px 0",
+            borderRadius: 8,
+            border: "1px solid",
+            borderColor: activeTab === "weekly" ? "var(--ink)" : "var(--border)",
+            background: activeTab === "weekly" ? "var(--ink)" : "transparent",
+            color: activeTab === "weekly" ? "#fff" : "var(--text-mid)",
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: "pointer",
+            transition: "all 0.15s ease",
+          }}
+        >
+          🎯 Weekly Hunt
+        </button>
+      </div>
+
+      {activeTab === "search" ? <SearchTab /> : <WeeklyHunt />}
+    </div>
+  );
+}
+
+function SearchTab() {
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<(CardIdentity & { marketPrice?: number })[] | null>(null);
   const [selectedCard, setSelectedCard] = useState<CardPriceResult | null>(null);
   const [loadingPrice, setLoadingPrice] = useState(false);
   const [error, setError] = useState("");
+
+  const RARITIES: CardRarity[] = [
+    "common",
+    "rare",
+    "reverse holo",
+    "holo rare",
+    "ultra rare",
+    "secret rare",
+  ];
+  const CONDITIONS: CardCondition[] = ["NM", "LP", "MP", "HP", "DMG"];
+  const EDITIONS: CardEdition[] = [
+    "1st Edition",
+    "Unlimited",
+    "shadowless",
+    "no rarity symbol",
+    "4th print",
+  ];
+  const GRADES: GradeLevel[] = ["PSA 6", "PSA 7", "PSA 8", "PSA 9", "PSA 10"];
+
+  type FilterKey = "rarity" | "condition" | "edition" | "graded";
 
   const [filters, setFilters] = useState<Record<FilterKey, string | null>>({
     rarity: null,
@@ -93,7 +154,6 @@ export default function HunterTool() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Lookup failed");
         setSelectedCard(data);
-        // Pre-fill raw price from TCG market price
         if (data.consolidated?.tcgplayerMarket) {
           setRawPriceInput(data.consolidated.tcgplayerMarket);
         } else if (data.consolidated?.ebaySoldRange?.median) {
@@ -112,18 +172,7 @@ export default function HunterTool() {
     (typeof rawPriceInput === "number" ? rawPriceInput : 0) + 80 + 30;
 
   return (
-    <div className="page page-narrow">
-      <div className="topbar">
-        <div className="hello">
-          HunterTool
-          <b>Find cards worth buying & grading</b>
-        </div>
-        <div className="pair">
-          <div className="avatar u1">Q</div>
-          <div className="avatar u2">S</div>
-        </div>
-      </div>
-
+    <>
       <div style={{ marginTop: 16 }}>
         <div className="field">
           <input
@@ -585,7 +634,7 @@ export default function HunterTool() {
               <span className="r amount">$80.00</span>
             </div>
             <div className="break-row">
-              <span className="l">Shipping (to & back)</span>
+              <span className="l">Shipping (to &amp; back)</span>
               <span className="r amount">$30.00</span>
             </div>
             <div
@@ -678,6 +727,6 @@ export default function HunterTool() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
