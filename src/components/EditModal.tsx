@@ -59,6 +59,8 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
   const [saleSplit, setSaleSplit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteTimeout, setDeleteTimeout] = useState<ReturnType<typeof setTimeout> | null>(null);
   const descInputRef = useRef<HTMLInputElement>(null);
 
   const isTransfer = category === "transfer";
@@ -177,7 +179,11 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
 
   const handleDelete = async () => {
     if (!card) return;
-    if (!window.confirm("Delete this entry?")) return;
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!card) return;
 
     setDeleting(true);
 
@@ -361,16 +367,44 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
           </div>
 
           <div className="modal-actions">
-            <button type="button" className="cta danger" onClick={handleDelete} disabled={deleting || saving}>
+            <button type="button" className="cta danger" onClick={handleDelete} disabled={deleting || saving || showDeleteConfirm}>
               {deleting ? "Deleting..." : "Delete"}
             </button>
             <button type="button" className="cta ghost" onClick={onClose} disabled={saving || deleting}>
               Cancel
             </button>
-            <button type="submit" className="cta" disabled={saving || deleting || !amountValue || !description.trim()}>
+            <button type="submit" className="cta" disabled={saving || deleting || !amountValue || !description.trim() || showDeleteConfirm}>
               {saving ? "Saving..." : "Save changes"}
             </button>
           </div>
+
+          {showDeleteConfirm && (
+            <div style={{ marginTop: 16, padding: "14px 16px", borderRadius: 8, background: "rgba(200, 80, 60, 0.08)", border: "1px solid var(--clay)" }}>
+              <p style={{ margin: "0 0 12px", fontSize: 14, color: "var(--clay)" }}>
+                Are you sure you want to delete this entry? This cannot be undone.
+              </p>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  type="button"
+                  className="cta danger"
+                  onClick={confirmDelete}
+                  disabled={deleting}
+                  style={{ flex: 1 }}
+                >
+                  {deleting ? "Deleting..." : "Yes, delete"}
+                </button>
+                <button
+                  type="button"
+                  className="cta ghost"
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={deleting}
+                  style={{ flex: 1 }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </form>
       </div>
     </div>

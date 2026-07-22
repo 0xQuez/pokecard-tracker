@@ -1,0 +1,17 @@
+async function t() {
+  // The API needs number quoted. name without wildcard works for prefix match.
+  const tests = [
+    'name:psyduck number:"104"',
+    'name:charizard number:"4"',
+    'name:charizard',
+    'name:lugia',
+  ];
+  for (const q of tests) {
+    const url = 'https://api.pokemontcg.io/v2/cards?q=' + encodeURIComponent(q) + '&pageSize=10';
+    const res = await fetch(url, { headers: {Accept:'application/json'} });
+    const d = await res.json();
+    console.log('Q:', q, 'status:', res.status, 'count:', d.count);
+    if (d.data) d.data.forEach(c => console.log('  ', c.name, c.set.name, c.number, c.id));
+  }
+}
+t();
