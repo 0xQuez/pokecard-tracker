@@ -123,10 +123,15 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
 
           <div className="card stat" style={{ marginBottom: 16 }}>
             <div className="k">Shared P&amp;L</div>
-            <div className={`v amount ${breakdown.totalNetSpent >= 0 ? "pos" : "neg"}`} style={{ fontSize: 28 }}>
-              {breakdown.totalNetSpent >= 0 ? "+" : "−"}${Math.abs(breakdown.totalNetSpent).toFixed(2)}
-            </div>
-            <div className="d">Net of expenses minus sales</div>
+            {(() => {
+              const netPnL = -breakdown.totalNetSpent;
+              return (
+                <div className={`v amount ${netPnL >= 0 ? "pos" : "neg"}`} style={{ fontSize: 28 }}>
+                  {netPnL >= 0 ? "+" : "−"}${Math.abs(netPnL).toFixed(2)}
+                </div>
+              );
+            })()}
+            <div className="d">Net of sales minus expenses</div>
           </div>
 
           <div className="partners">
@@ -218,7 +223,7 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
                     <div className={`a ${isTransfer ? "transfer" : isProfit ? "pos" : "neg"}`}>
                       {isTransfer ? "" : isProfit ? "+" : "−"}${(isProfit ? (card.sale_price || total) : total).toFixed(2)}
                     </div>
-                    <div className="half">{isTransfer ? "full transfer" : isProfit ? `${((card.sale_price || total) / 2).toFixed(2)} each` : `${(total * (card.split_percent / 100)).toFixed(2)} each`}</div>
+                    <div className="half">{isTransfer ? "full transfer" : isProfit ? `${((card.sale_price || total) / 2).toFixed(2)} each` : `${(total / 2).toFixed(2)} each`}</div>
                   </div>
                   {onEdit && (
                     <button

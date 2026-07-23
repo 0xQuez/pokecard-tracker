@@ -93,7 +93,7 @@ export default function Add({ onAdd, currentUser }: Props) {
       insurance: 0,
       other_costs: 0,
       notes: "",
-      paid_by: currentUserCapitalized,
+      paid_by: userCapitalize(payer),
       split_percent: 100,
       type: isTransfer ? "transfer" : isSale ? "profit" : "expense",
       sale_price: isSale ? amountValue : null,
@@ -130,6 +130,14 @@ export default function Add({ onAdd, currentUser }: Props) {
       alert("Error adding entry: " + error.message);
       return;
     }
+
+    // Reset form so next Add starts blank
+    setRawAmount("");
+    setDescription("");
+    setCategory("card");
+    setPayer(currentUser);
+    setTransferDirection("current_to_other");
+    setSaleSplit(false);
 
     onAdd();
   };

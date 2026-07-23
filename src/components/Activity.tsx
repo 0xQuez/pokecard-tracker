@@ -139,7 +139,7 @@ export default function Activity({ cards, currentUser, onEdit }: Props) {
                           ? `${total.toFixed(2)} sent`
                           : isProfit
                             ? `${((card.sale_price || total) / 2).toFixed(2)} each`
-                            : `${(total * (card.split_percent / 100)).toFixed(2)} each`}
+                            : `${(total / 2).toFixed(2)} each`}
                       </div>
                     </div>
                     {onEdit && (
