@@ -2,6 +2,10 @@
 
 import { useState, useCallback } from "react";
 import WeeklyHunt from "@/components/WeeklyHunt";
+import ValuationRequestButton from "@/components/valuation/ValuationRequestButton";
+import ValuationResultCard from "@/components/valuation/ValuationResultCard";
+import { supabase } from "@/lib/supabaseClient";
+import { queueValuation, type QueueOutcome } from "@/lib/valuation-ui";
 import type { CardPriceResult, CardIdentity, CardRarity, CardCondition, CardEdition, GradeLevel } from "@/lib/models";
 
 export default function HunterTool() {
@@ -71,6 +75,7 @@ function SearchTab() {
   const [selectedCard, setSelectedCard] = useState<CardPriceResult | null>(null);
   const [loadingPrice, setLoadingPrice] = useState(false);
   const [error, setError] = useState("");
+  const [valuationRequestId, setValuationRequestId] = useState<number | null>(null);
 
   const RARITIES: CardRarity[] = [
     "common",
@@ -145,6 +150,7 @@ function SearchTab() {
     async (card: CardIdentity & { marketPrice?: number }) => {
       setLoadingPrice(true);
       setError("");
+      setValuationRequestId(null);
       try {
         const res = await fetch(
           `/api/hunter/lookup?id=${card.setId}&name=${encodeURIComponent(
@@ -167,6 +173,26 @@ function SearchTab() {
     },
     []
   );
+
+  // ── On-demand valuation (T18.8) ─────────────────────────────────────────────
+  const queryForCard = useCallback(
+    (c: CardIdentity & { marketPrice?: number }) =>
+      [c.name, c.set].filter(Boolean).join(" ").trim(),
+    []
+  );
+
+  const handleValuationQueued = useCallback((o: QueueOutcome) => {
+    if (o.kind !== "error") setValuationRequestId(o.requestId);
+  }, []);
+
+  const handleReRun = useCallback(async () => {
+    if (!selectedCard) return;
+    const outcome = await queueValuation(supabase, {
+      cardQuery: queryForCard(selectedCard.card),
+      userId: "Quez",
+    });
+    if (outcome.kind !== "error") setValuationRequestId(outcome.requestId);
+  }, [selectedCard, queryForCard]);
 
   const totalCost =
     (typeof rawPriceInput === "number" ? rawPriceInput : 0) + 80 + 30;
@@ -455,6 +481,29 @@ function SearchTab() {
             )}
           </div>
 
+          {/* On-demand valuation trigger (T18.8) */}
+          <div className="card" style={{ marginTop: 12 }}>
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                marginBottom: 4,
+                color: "var(--ink)",
+              }}
+            >
+              Card Valuation
+            </div>
+            <p style={{ fontSize: 12, color: "var(--text-mid)", margin: "0 0 4px" }}>
+              Get a per-condition price estimate (NM / LP / MP / HP / DMG) from recent
+              eBay sold listings cross-checked against TCGPlayer. Takes a minute or two.
+            </p>
+            <ValuationRequestButton
+              cardQuery={queryForCard(selectedCard.card)}
+              userId="Quez"
+              onValuation={handleValuationQueued}
+            />
+          </div>
+
           {/* Breakdown */}
           <div className="card breakdown" style={{ marginTop: 12 }}>
             {selectedCard.consolidated.tcgplayerMarket && (
@@ -725,6 +774,16 @@ function SearchTab() {
               </div>
             )}
           </div>
+
+          {/* On-demand valuation result (T18.8) */}
+          {valuationRequestId && (
+            <div style={{ marginTop: 12 }}>
+              <ValuationResultCard
+                valuationId={valuationRequestId}
+                onReRun={handleReRun}
+              />
+            </div>
+          )}
         </div>
       )}
     </>
