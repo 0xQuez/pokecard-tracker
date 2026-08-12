@@ -129,7 +129,9 @@ end $$;
 -- Base-table privileges. Supabase's default grants would add these automatically,
 -- but we grant explicitly so the migration is self-contained regardless of
 -- project defaults. The policies above scope what these privileges may touch.
+grant usage on schema public to anon;
 grant select, insert on public.valuation_requests to anon;
+grant usage, select on sequence public.valuation_requests_id_seq to anon;
 grant select on public.valuation_results to anon;
 
 -- The agent worker uses the service role key (see src/app/api/weekly-hunt/route.ts),
