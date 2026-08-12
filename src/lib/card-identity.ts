@@ -366,6 +366,15 @@ export async function resolveCardIdentity(query: string, catalog: CardCatalog): 
 
 const TCG_API_BASE = "https://api.pokemontcg.io/v2";
 
+/** Minimal shape of a raw pokemontcg.io card payload we read. */
+interface RawApiCard {
+  id: string;
+  name: string;
+  number: string;
+  set?: { id: string; name: string; ptcgoCode: string | null } | null;
+  tcgplayer?: { prices?: Record<string, unknown> } | null;
+}
+
 /**
  * Client-side set-name matcher. pokemontcg.io's `set.name:` query filter is flaky
  * (intermittently 500s) and exact-name only, so we fetch by name+number and rank by
@@ -420,14 +429,14 @@ export const pokemontcgCatalog: CardCatalog = {
     const pageSize = Math.max(limit, 40);
     const url = `${TCG_API_BASE}/cards?q=${encodeURIComponent(q)}&pageSize=${pageSize}`;
 
-    const fetchJson = async (u: string): Promise<any[]> => {
+    const fetchJson = async (u: string): Promise<RawApiCard[]> => {
       try {
         const res = await fetch(u, { headers: { Accept: "application/json" } });
         if (!res.ok) {
           lastError = `catalog HTTP ${res.status}`;
           return [];
         }
-        const data = await res.json();
+        const data = (await res.json()) as { data?: RawApiCard[] };
         lastError = null;
         return data.data || [];
       } catch (e) {
@@ -444,12 +453,12 @@ export const pokemontcgCatalog: CardCatalog = {
       cards = await fetchJson(fallback);
     }
 
-    const mapped = cards.map((c: any) => ({
+    const mapped = cards.map((c: RawApiCard) => ({
       id: c.id,
       name: c.name,
       number: c.number,
-      setId: c.set?.id ?? null,
-      setName: c.set?.name ?? null,
+      setId: c.set?.id ?? "",
+      setName: c.set?.name ?? "",
       ptcgoCode: c.set?.ptcgoCode ?? null,
       availableVariants: availableVariantsFromCard({ setId: c.set?.id, tcgplayer: c.tcgplayer }),
     }));
