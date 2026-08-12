@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase, uploadCardImage } from "@/lib/supabaseClient";
 import { calcTotal, userCapitalize } from "@/lib/helpers";
+import CardDetails, { type CardDetailsValue } from "@/components/CardDetails";
 
 type Card = {
   id: number;
@@ -27,6 +28,11 @@ type Card = {
   transfer_from?: string;
   transfer_to?: string;
   transfer_amount?: number;
+  condition?: string;
+  image_url?: string;
+  card_grade?: string;
+  cert_number?: string;
+  purchased_date?: string;
 };
 
 type Props = {
@@ -63,6 +69,16 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
   const [deleteTimeout, setDeleteTimeout] = useState<ReturnType<typeof setTimeout> | null>(null);
   const descInputRef = useRef<HTMLInputElement>(null);
 
+  // Per-card details (all optional)
+  const [cardDetails, setCardDetails] = useState<CardDetailsValue>({
+    condition: "",
+    card_grade: "",
+    cert_number: "",
+    purchased_date: "",
+  });
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageCleared, setImageCleared] = useState(false);
+
   const isTransfer = category === "transfer";
   const isSale = category === "sale";
 
@@ -85,6 +101,14 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
       }
       setPayer(card.paid_by === currentUserCapitalized ? "quez" : "stevie");
       setSaleSplit(card.paid_by === "Both");
+      setCardDetails({
+        condition: card.condition || "",
+        card_grade: card.card_grade || "",
+        cert_number: card.cert_number || "",
+        purchased_date: card.purchased_date || "",
+      });
+      setImageFile(null);
+      setImageCleared(false);
     }
   }, [card, currentUser]);
 
@@ -108,7 +132,10 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (document.activeElement === descInputRef.current) return;
+      // Never hijack keys while the user is typing in a field (description,
+      // cert number, condition select, date, file input, etc.).
+      const el = document.activeElement as HTMLElement | null;
+      if (el && ["INPUT", "SELECT", "TEXTAREA"].includes(el.tagName)) return;
       if (/^[0-9.]$/.test(e.key)) {
         e.preventDefault();
         pressKey(e.key);
@@ -162,6 +189,28 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
       cardData.shipping_from_grader = amountValue / 2;
     } else {
       cardData.purchase_price = amountValue;
+    }
+
+    // Optional per-card details
+    cardData.condition = cardDetails.condition || null;
+    cardData.card_grade = cardDetails.card_grade || null;
+    cardData.cert_number = cardDetails.cert_number || null;
+    cardData.purchased_date = cardDetails.purchased_date || null;
+
+    if (imageCleared) {
+      // User removed the existing image.
+      if (card.image_url) {
+        const prev = card.image_url;
+        await supabase.storage.from("card-images").remove([prev]).catch(() => {});
+      }
+      cardData.image_url = null;
+    } else if (imageFile) {
+      const path = await uploadCardImage(imageFile);
+      if (path) {
+        cardData.image_url = path;
+      } else {
+        alert("Card image couldn't be uploaded. The rest of your changes will still be saved.");
+      }
     }
 
     const { error } = await supabase.from("cards").update(cardData).eq("id", card.id);
@@ -348,6 +397,24 @@ export default function EditModal({ onClose, onSave, onDelete, card, currentUser
                   {otherUserCapitalized} → {currentUserCapitalized}
                 </button>
               </div>
+            </div>
+          )}
+
+          {!isTransfer && !isSale && (
+            <div className="card-details-wrap">
+              <CardDetails
+                value={cardDetails}
+                onChange={setCardDetails}
+                existingImage={card.image_url}
+                imageFile={imageFile}
+                onImageFileChange={(f) => {
+                  setImageFile(f);
+                  if (f) setImageCleared(false);
+                }}
+                imageCleared={imageCleared}
+                onClearImage={() => setImageCleared(true)}
+                defaultOpen={Boolean(card.condition || card.card_grade || card.cert_number || card.purchased_date || card.image_url)}
+              />
             </div>
           )}
 

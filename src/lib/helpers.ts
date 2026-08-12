@@ -21,7 +21,33 @@ export type Card = {
   transfer_from?: string;
   transfer_to?: string;
   transfer_amount?: number;
+  condition?: string;
+  image_url?: string;
+  card_grade?: string;
+  cert_number?: string;
+  purchased_date?: string;
 };
+
+export const CARD_CONDITIONS = ["NM", "LP", "MP", "HP", "DMG"] as const;
+
+export const CARD_IMAGE_BUCKET = "card-images";
+
+/** Common grading options, shown as suggestions; users can type any value. */
+export const GRADING_OPTIONS = [
+  "PSA 6",
+  "PSA 7",
+  "PSA 8",
+  "PSA 9",
+  "PSA 10",
+];
+
+/** Build the public URL for a stored card image path. */
+export function publicCardImageUrl(path: string): string {
+  if (!path) return "";
+  if (/^https?:\/\//.test(path)) return path;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  return `${url}/storage/v1/object/public/${CARD_IMAGE_BUCKET}/${path}`;
+}
 
 export function calcTotal(c: Card): number {
   if (c.type === "transfer") {
@@ -35,6 +61,42 @@ export function calcTotal(c: Card): number {
     c.insurance +
     c.other_costs
   );
+}
+
+/**
+ * A card purchase that has been recorded as sold (sale_price set) and is NOT a
+ * standalone profit entry. Standalone profit entries (type === "profit") are the
+ * legacy debt-ledger sales and have no purchase cost basis, so they don't count
+ * as "marked sold" for per-card PnL.
+ */
+export function isCardSold(c: Card): boolean {
+  return c.type !== "profit" && c.sale_price != null && c.sale_price > 0;
+}
+
+/**
+ * Whether this entry is eligible for the "Mark as sold" action: a real goods
+ * purchase (positive purchase_price) that hasn't been sold or settled yet.
+ */
+export function canMarkSold(c: Card): boolean {
+  return (
+    c.type === "expense" &&
+    !c.settled_at &&
+    !isCardSold(c) &&
+    (c.purchase_price || 0) > 0
+  );
+}
+
+/** Realized per-card profit = sale price minus total cost basis. 0 when not sold. */
+export function calcCardPnl(c: Card): number {
+  if (!isCardSold(c)) return 0;
+  return (c.sale_price || 0) - calcTotal(c);
+}
+
+/** Profit margin percentage (null when not sold or cost basis is zero). */
+export function calcCardPnlMargin(c: Card): number | null {
+  const cost = calcTotal(c);
+  if (!isCardSold(c) || cost <= 0) return null;
+  return (calcCardPnl(c) / cost) * 100;
 }
 
 export function formatDate(dateStr: string): string {

@@ -1202,6 +1202,153 @@ input {
   flex: 1;
 }
 
+/* ============ CARD DETAILS (optional per-card fields) ============ */
+.card-details-wrap {
+  margin-top: 8px;
+}
+
+.card-details-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 20px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--text-mid);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: left;
+  transition: all var(--t-fast) var(--ease);
+}
+
+.card-details-toggle:hover {
+  border-color: var(--line-strong);
+  color: var(--text-hi);
+}
+
+.card-details-toggle em {
+  font-style: normal;
+  font-weight: 500;
+  color: var(--text-low);
+}
+
+.card-details-toggle .chev {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  line-height: 1;
+  background: var(--surface-3);
+  color: var(--sage-bright);
+}
+
+.card-details-toggle.open {
+  border-color: var(--sage);
+}
+
+.card-details-body {
+  margin-top: 6px;
+}
+
+.select-input {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--sage) 50%), linear-gradient(135deg, var(--sage) 50%, transparent 50%);
+  background-position: calc(100% - 22px) calc(50% - 2px), calc(100% - 17px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  color: var(--text-hi);
+}
+
+.select-input option {
+  background: var(--surface-2);
+  color: var(--text-hi);
+}
+
+.file-input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--text-mid);
+}
+
+.file-input::file-selector-button {
+  margin-right: 12px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--sage-deep);
+  color: var(--sage-bright);
+  font-weight: 600;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.image-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.image-preview {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.link-btn {
+  color: var(--text-low);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link-btn:hover {
+  color: var(--clay);
+}
+
+.badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  line-height: 1.5;
+}
+
+.badge-cond {
+  color: var(--sand);
+  background: rgba(226, 211, 174, .12);
+  border: 1px solid rgba(226, 211, 174, .25);
+}
+
+.badge-grade {
+  color: var(--sage-bright);
+  background: rgba(166, 196, 155, .12);
+  border: 1px solid rgba(166, 196, 155, .25);
+}
+
 /* ============ DESKTOP ============ */
 @media (min-width: 880px) {
   body {
@@ -1351,4 +1498,117 @@ input {
   font-size: 18px;
   margin-bottom: 4px;
   color: var(--text-hi);
+}
+
+/* ============ SALE / PER-CARD PnL ============ */
+
+.sold-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--sage-deep);
+  color: var(--sage-bright);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.mark-sold-btn {
+  flex-shrink: 0;
+  margin-left: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text-mid);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease);
+  white-space: nowrap;
+}
+
+.mark-sold-btn:hover {
+  border-color: var(--moss);
+  color: var(--moss);
+}
+
+.pnl-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 10px 0 12px;
+}
+
+.pnl-stat {
+  padding: 12px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+.pnl-k {
+  font-size: 12px;
+  color: var(--text-mid);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 4px;
+}
+
+.pnl-stat .v {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.pnl-overall {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+  color: var(--text-mid);
+  margin-bottom: 10px;
+}
+
+.pnl-overall .amount {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.pnl-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pnl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.pnl-name {
+  color: var(--text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pnl-val {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pnl-margin {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: .8;
 }

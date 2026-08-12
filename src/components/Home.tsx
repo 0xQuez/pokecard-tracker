@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { calcTotal, formatDate, userCapitalize } from "@/lib/helpers";
+import { calcTotal, calcCardPnl, calcCardPnlMargin, canMarkSold, formatDate, isCardSold, userCapitalize } from "@/lib/helpers";
 import { calcSettlementBreakdown } from "@/lib/settlement";
 
 type Card = {
@@ -27,15 +27,21 @@ type Card = {
   transfer_from?: string;
   transfer_to?: string;
   transfer_amount?: number;
+  condition?: string;
+  image_url?: string;
+  card_grade?: string;
+  cert_number?: string;
+  purchased_date?: string;
 };
 
 type Props = {
   cards: Card[];
   currentUser: "quez" | "stevie";
   onEdit?: (card: Card) => void;
+  onMarkSold?: (card: Card) => void;
 };
 
-export default function Home({ cards, currentUser, onEdit }: Props) {
+export default function Home({ cards, currentUser, onEdit, onMarkSold }: Props) {
   const otherUser = currentUser === "quez" ? "stevie" : "quez";
   const currentUserCapitalized = userCapitalize(currentUser);
   const otherUserCapitalized = userCapitalize(otherUser);
@@ -62,12 +68,26 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, 5);
 
+    // Portfolio PnL (per-card, from purchase entries marked as sold)
+    const soldCards = cards.filter(isCardSold);
+    const inventoryCards = cards.filter(
+      (c) => c.type === "expense" && !isCardSold(c) && calcTotal(c) > 0
+    );
+    const inventoryValue = inventoryCards.reduce((sum, c) => sum + calcTotal(c), 0);
+    const realizedProfit = soldCards.reduce((sum, c) => sum + calcCardPnl(c), 0);
+    const totalSaleProceeds = soldCards.reduce((sum, c) => sum + (c.sale_price || 0), 0);
+
     return {
       ...settlement,
       totalGraded,
       totalSold,
       splitAmount: settlement.fairShareEach,
       recent,
+      soldCards,
+      inventoryCards,
+      inventoryValue,
+      realizedProfit,
+      totalSaleProceeds,
     };
   }, [cards, currentUser]);
 
@@ -134,6 +154,52 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
             <div className="d">Net of sales minus expenses</div>
           </div>
 
+          {/* Portfolio PnL — per-card, from purchase entries marked as sold */}
+          <div className="card stat" style={{ marginBottom: 16 }}>
+            <div className="k">Portfolio P&amp;L</div>
+            <div className="pnl-summary">
+              <div className="pnl-stat">
+                <div className="pnl-k">Inventory value</div>
+                <div className="v amount">${breakdown.inventoryValue.toFixed(2)}</div>
+                <div className="d">{breakdown.inventoryCards?.length ?? 0} unsold at cost</div>
+              </div>
+              <div className="pnl-stat">
+                <div className="pnl-k">Sale proceeds</div>
+                <div className="v amount">${breakdown.totalSaleProceeds.toFixed(2)}</div>
+                <div className="d">{breakdown.soldCards.length} sold</div>
+              </div>
+            </div>
+            <div className="pnl-overall">
+              <span>Realized profit</span>
+              <span className={`amount ${breakdown.realizedProfit >= 0 ? "pos" : "neg"}`}>
+                {breakdown.realizedProfit >= 0 ? "+" : "−"}${Math.abs(breakdown.realizedProfit).toFixed(2)}
+              </span>
+            </div>
+            {breakdown.soldCards.length > 0 && (
+              <div className="pnl-breakdown">
+                {breakdown.soldCards.map((c) => {
+                  const pnl = calcCardPnl(c);
+                  const margin = calcCardPnlMargin(c);
+                  return (
+                    <div key={c.id} className="pnl-row">
+                      <span className="pnl-name" title={c.card_name}>
+                        {c.card_name}
+                      </span>
+                      <span className={`pnl-val amount ${pnl >= 0 ? "pos" : "neg"}`}>
+                        {pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(2)}
+                        {margin !== null && (
+                          <span className="pnl-margin">
+                            {margin >= 0 ? "+" : "−"}{Math.abs(margin).toFixed(0)}%
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <div className="partners">
             <div className="card partner">
               <div className="who">
@@ -188,6 +254,8 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
               const total = calcTotal(card);
               const isTransfer = card.type === "transfer";
               const isProfit = card.type === "profit" || card.sale_price;
+              const isSold = isCardSold(card);
+              const canSold = canMarkSold(card);
 
               let catIcon = "🃏";
               if (card.grading_fee > 0 || card.shipping_to_grader > 0 || card.shipping_from_grader > 0) {
@@ -207,24 +275,70 @@ export default function Home({ cards, currentUser, onEdit }: Props) {
                           ({card.transfer_from} → {card.transfer_to})
                         </span>
                       )}
+                      {isSold && <span className="sold-badge">Sold</span>}
                     </div>
                     <div className="s">
-                      <span className={`dot ${card.paid_by === currentUserCapitalized || card.transfer_from === currentUserCapitalized ? "u1" : "u2"}`}></span>
-                      {isTransfer && card.transfer_from && card.transfer_to
-                        ? `${card.transfer_from} sent ${card.transfer_to} $${total.toFixed(2)}`
-                        : isProfit
-                          ? (card.paid_by === "Both"
-                            ? `Both collected · ${formatDate(card.created_at)}`
-                            : `${card.paid_by} collected · ${formatDate(card.created_at)}`)
-                          : `${card.paid_by} paid · ${formatDate(card.created_at)}`}
+                      {isSold ? (
+                        <>
+                          <span className={`dot ${card.paid_by === currentUserCapitalized ? "u1" : "u2"}`}></span>
+                          Cost ${total.toFixed(2)} · Sold ${(card.sale_price || 0).toFixed(2)}
+                          {card.date_sold ? ` · ${formatDate(card.date_sold)}` : ""}
+                        </>
+                      ) : isTransfer && card.transfer_from && card.transfer_to ? (
+                        <>
+                          <span className={`dot ${card.transfer_from === currentUserCapitalized ? "u1" : "u2"}`}></span>
+                          {card.transfer_from} sent {card.transfer_to} ${total.toFixed(2)}
+                        </>
+                      ) : (
+                        <>
+                          <span className={`dot ${card.paid_by === currentUserCapitalized ? "u1" : "u2"}`}></span>
+                          {card.paid_by} {isProfit ? "collected" : "paid"} · {formatDate(card.created_at)}
+                        </>
+                      )}
                     </div>
+                    {(card.condition || card.card_grade) && (
+                      <div className="badges">
+                        {card.condition && <span className="badge badge-cond">{card.condition}</span>}
+                        {card.card_grade && <span className="badge badge-grade">{card.card_grade}</span>}
+                      </div>
+                    )}
                   </div>
                   <div className="tx-amt">
-                    <div className={`a ${isTransfer ? "transfer" : isProfit ? "pos" : "neg"}`}>
-                      {isTransfer ? "" : isProfit ? "+" : "−"}${(isProfit ? (card.sale_price || total) : total).toFixed(2)}
-                    </div>
-                    <div className="half">{isTransfer ? "full transfer" : isProfit ? `${((card.sale_price || total) / 2).toFixed(2)} each` : `${(total / 2).toFixed(2)} each`}</div>
+                    {isSold ? (
+                      (() => {
+                        const pnl = calcCardPnl(card);
+                        const margin = calcCardPnlMargin(card);
+                        return (
+                          <>
+                            <div className={`a amount ${pnl >= 0 ? "pos" : "neg"}`}>
+                              {pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(2)}
+                            </div>
+                            <div className={`half ${pnl >= 0 ? "pos" : "neg"}`}>
+                              {margin !== null
+                                ? `${margin >= 0 ? "+" : "−"}${Math.abs(margin).toFixed(1)}%`
+                                : "PnL"}
+                            </div>
+                          </>
+                        );
+                      })()
+                    ) : (
+                      <>
+                        <div className={`a ${isTransfer ? "transfer" : isProfit ? "pos" : "neg"}`}>
+                          {isTransfer ? "" : isProfit ? "+" : "−"}${(isProfit ? (card.sale_price || total) : total).toFixed(2)}
+                        </div>
+                        <div className="half">{isTransfer ? "full transfer" : isProfit ? `${((card.sale_price || total) / 2).toFixed(2)} each` : `${(total / 2).toFixed(2)} each`}</div>
+                      </>
+                    )}
                   </div>
+                  {canSold && onMarkSold && (
+                    <button
+                      type="button"
+                      className="mark-sold-btn"
+                      onClick={(e) => { e.stopPropagation(); onMarkSold(card); }}
+                    >
+                      Mark sold
+                    </button>
+                  )}
                   {onEdit && (
                     <button
                       type="button"

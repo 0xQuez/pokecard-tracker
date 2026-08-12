@@ -11,6 +11,7 @@ import History from "@/components/History";
 import HunterTool from "@/components/HunterTool";
 import ProfileGate from "@/components/ProfileGate";
 import EditModal from "@/components/EditModal";
+import MarkSoldModal from "@/components/MarkSoldModal";
 
 type Screen = "home" | "activity" | "add" | "settle" | "history" | "hunter";
 type Profile = "quez" | "stevie";
@@ -49,6 +50,7 @@ export default function Page() {
   const [toastMessage, setToastMessage] = useState("");
   const [toastVisible, setToastVisible] = useState(false);
   const [editingCard, setEditingCard] = useState<Card | null>(null);
+  const [sellingCard, setSellingCard] = useState<Card | null>(null);
 
   // Only show active (unsettled) cards
   const activeCards = cards.filter((c) => !c.settled_at);
@@ -122,6 +124,20 @@ export default function Page() {
     fetchCards();
     setEditingCard(null);
     showToast("✓ Entry deleted");
+  };
+
+  const handleMarkSold = (card: Card) => {
+    setSellingCard(card);
+  };
+
+  const handleMarkSoldSave = () => {
+    fetchCards();
+    setSellingCard(null);
+    showToast("✓ Sale recorded");
+  };
+
+  const handleMarkSoldClose = () => {
+    setSellingCard(null);
   };
 
   const handleSettle = () => {
@@ -262,7 +278,7 @@ export default function Page() {
             </div>
           </div>
           {!loading ? (
-            <Home cards={activeCards} currentUser={currentProfile} onEdit={handleEditCard} />
+            <Home cards={activeCards} currentUser={currentProfile} onEdit={handleEditCard} onMarkSold={handleMarkSold} />
           ) : (
             <div className="page" style={{ textAlign: "center", paddingTop: 100 }}>
               <p className="text-gray-500">Loading...</p>
@@ -280,7 +296,7 @@ export default function Page() {
             </div>
           </div>
           {!loading ? (
-            <Activity cards={activeCards} currentUser={currentProfile} onEdit={handleEditCard} />
+            <Activity cards={activeCards} currentUser={currentProfile} onEdit={handleEditCard} onMarkSold={handleMarkSold} />
           ) : (
             <div className="page page-narrow" style={{ textAlign: "center", paddingTop: 100 }}>
               <p className="text-gray-500">Loading...</p>
@@ -435,6 +451,15 @@ export default function Page() {
           onClose={handleEditClose}
           onSave={handleEditSave}
           onDelete={handleEditDelete}
+        />
+      )}
+
+      {/* Mark as sold Modal */}
+      {sellingCard && (
+        <MarkSoldModal
+          card={sellingCard}
+          onClose={handleMarkSoldClose}
+          onSave={handleMarkSoldSave}
         />
       )}
     </div>

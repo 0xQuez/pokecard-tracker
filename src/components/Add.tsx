@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase, uploadCardImage } from "@/lib/supabaseClient";
 import { userCapitalize } from "@/lib/helpers";
+import CardDetails, { type CardDetailsValue } from "@/components/CardDetails";
 
 type Props = {
   onAdd: () => void;
@@ -33,6 +34,16 @@ export default function Add({ onAdd, currentUser }: Props) {
   const [isDesktopTyping, setIsDesktopTyping] = useState(false);
   const descInputRef = useRef<HTMLInputElement>(null);
 
+  // Per-card details (all optional)
+  const [cardDetails, setCardDetails] = useState<CardDetailsValue>({
+    condition: "",
+    card_grade: "",
+    cert_number: "",
+    purchased_date: "",
+  });
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageCleared, setImageCleared] = useState(false);
+
   const isTransfer = category === "transfer";
   const isSale = category === "sale";
 
@@ -57,7 +68,10 @@ export default function Add({ onAdd, currentUser }: Props) {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (document.activeElement === descInputRef.current) return;
+      // Never hijack keys while the user is typing in a field (description,
+      // cert number, condition select, date, file input, etc.).
+      const el = document.activeElement as HTMLElement | null;
+      if (el && ["INPUT", "SELECT", "TEXTAREA"].includes(el.tagName)) return;
       if (/^[0-9.]$/.test(e.key)) {
         e.preventDefault();
         pressKey(e.key);
@@ -122,6 +136,21 @@ export default function Add({ onAdd, currentUser }: Props) {
       cardData.purchase_price = amountValue;
     }
 
+    // Optional per-card details
+    cardData.condition = cardDetails.condition || null;
+    cardData.card_grade = cardDetails.card_grade || null;
+    cardData.cert_number = cardDetails.cert_number || null;
+    cardData.purchased_date = cardDetails.purchased_date || null;
+
+    if (imageFile) {
+      const path = await uploadCardImage(imageFile);
+      if (path) {
+        cardData.image_url = path;
+      } else {
+        alert("Card image couldn't be uploaded. The entry will be saved without it — you can add it later in Edit.");
+      }
+    }
+
     const { error } = await supabase.from("cards").insert([cardData]);
 
     setSaving(false);
@@ -138,6 +167,9 @@ export default function Add({ onAdd, currentUser }: Props) {
     setPayer(currentUser);
     setTransferDirection("current_to_other");
     setSaleSplit(false);
+    setCardDetails({ condition: "", card_grade: "", cert_number: "", purchased_date: "" });
+    setImageFile(null);
+    setImageCleared(false);
 
     onAdd();
   };
@@ -207,16 +239,16 @@ export default function Add({ onAdd, currentUser }: Props) {
               <div className="payer-toggle" id="payer-row">
                 <button
                   type="button"
-                  className={`payer ${payer === "quez" ? "on" : ""}`}
-                  onClick={() => setPayer("quez")}
+                  className={`payer ${payer === currentUser ? "on" : ""}`}
+                  onClick={() => setPayer(currentUser)}
                 >
                   <span className="avatar u1">{currentUserCapitalized[0]}</span>
                   {currentUserCapitalized}
                 </button>
                 <button
                   type="button"
-                  className={`payer ${payer === "stevie" ? "on" : ""}`}
-                  onClick={() => setPayer("stevie")}
+                  className={`payer ${payer === otherUser ? "on" : ""}`}
+                  onClick={() => setPayer(otherUser)}
                 >
                   <span className="avatar u2">{otherUserCapitalized[0]}</span>
                   {otherUserCapitalized}
@@ -231,16 +263,16 @@ export default function Add({ onAdd, currentUser }: Props) {
               <div className="payer-toggle" id="payer-row">
                 <button
                   type="button"
-                  className={`payer ${payer === "quez" ? "on" : ""}`}
-                  onClick={() => setPayer("quez")}
+                  className={`payer ${payer === currentUser ? "on" : ""}`}
+                  onClick={() => setPayer(currentUser)}
                 >
                   <span className="avatar u1">{currentUserCapitalized[0]}</span>
                   {currentUserCapitalized}
                 </button>
                 <button
                   type="button"
-                  className={`payer ${payer === "stevie" ? "on" : ""}`}
-                  onClick={() => setPayer("stevie")}
+                  className={`payer ${payer === otherUser ? "on" : ""}`}
+                  onClick={() => setPayer(otherUser)}
                 >
                   <span className="avatar u2">{otherUserCapitalized[0]}</span>
                   {otherUserCapitalized}
@@ -289,6 +321,22 @@ export default function Add({ onAdd, currentUser }: Props) {
                   {otherUserCapitalized} → {currentUserCapitalized}
                 </button>
               </div>
+            </div>
+          )}
+
+          {!isTransfer && !isSale && (
+            <div className="card-details-wrap">
+              <CardDetails
+                value={cardDetails}
+                onChange={setCardDetails}
+                imageFile={imageFile}
+                onImageFileChange={(f) => {
+                  setImageFile(f);
+                  if (f) setImageCleared(false);
+                }}
+                imageCleared={imageCleared}
+                onClearImage={() => setImageCleared(true)}
+              />
             </div>
           )}
 
