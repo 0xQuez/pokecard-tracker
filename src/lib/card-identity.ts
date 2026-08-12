@@ -367,17 +367,6 @@ export async function resolveCardIdentity(query: string, catalog: CardCatalog): 
 const TCG_API_BASE = "https://api.pokemontcg.io/v2";
 
 /**
- * Live catalog backed by the free pokemontcg.io v2 API (no key required).
- *
- * Query syntax note: the API's `name:"..."` is an EXACT-phrase match, so it
- * returns 0 for partial names ("dragonite ex"). We use a wildcard
- * `name:*dragonite*ex*` plus the optional number. Set narrowing is done
- * client-side (see setMatchesHint) because the API's `set.name:` filter is
- * flaky and exact-match only, and "base set" must still match the set "Base".
- * If the name+number query yields nothing we fall back to a broader name-only
- * search so fuzzy matches still surface.
- */
-/**
  * Client-side set-name matcher. pokemontcg.io's `set.name:` query filter is flaky
  * (intermittently 500s) and exact-name only, so we fetch by name+number and rank by
  * set here. "base set" must match the set named "Base": we drop generic words and
@@ -407,7 +396,17 @@ export function setMatchScore(setName: string | null | undefined, hint: string):
   return hintWords.length / setWords.length;
 }
 
-/** Strips the generic word "set" so "base set" -> "base" (which matches "Base"). */
+/**
+ * Live catalog backed by the free pokemontcg.io v2 API (no key required).
+ *
+ * Query syntax note: the API's `name:"..."` is an EXACT-phrase match, so it
+ * returns 0 for partial names ("dragonite ex"). We use a wildcard
+ * `name:*dragonite*ex*` plus the optional number. Set narrowing is done
+ * client-side (see setMatchScore) because the API's `set.name:` filter is
+ * flaky and exact-match only, and "base set" must still match the set "Base".
+ * If the name+number query yields nothing we fall back to a broader name-only
+ * search so fuzzy matches still surface.
+ */
 // Module-scoped catalog health flag, shared by searchCards (writer) and health() (reader).
 let lastError: string | null = null;
 
