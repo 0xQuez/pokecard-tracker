@@ -18,6 +18,9 @@
 /out/
 
 # production
+__pycache__/
+*.pyc
+/tsconfig.tsbuildinfo
 /build
 
 # misc

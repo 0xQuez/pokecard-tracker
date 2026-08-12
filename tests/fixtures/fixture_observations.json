@@ -1,0 +1,72 @@
+{
+  "nm": {
+    "file": "fixtures/card_nm.png",
+    "expected_condition": "NM",
+    "vision_analysis": {
+      "corner_whitening": 0.0,
+      "back_whitening": 0.0,
+      "surface_scratches": 0.0,
+      "edge_wear": 0.0,
+      "centering_issue": false,
+      "creases": false,
+      "stains": false,
+      "notes": "Card appears pristine with sharp corners and clean edges."
+    }
+  },
+  "lp": {
+    "file": "fixtures/card_lp.png",
+    "expected_condition": "LP",
+    "vision_analysis": {
+      "corner_whitening": 0.7,
+      "back_whitening": 0.0,
+      "surface_scratches": 0.1,
+      "edge_wear": 0.6,
+      "centering_issue": false,
+      "creases": false,
+      "stains": false,
+      "notes": "Moderate corner whitening (top-left, bottom-right) and edge chipping; surface relatively clean."
+    }
+  },
+  "mp": {
+    "file": "fixtures/card_mp.png",
+    "expected_condition": "MP",
+    "vision_analysis": {
+      "corner_whitening": 0.3,
+      "back_whitening": 0.0,
+      "surface_scratches": 0.8,
+      "edge_wear": 0.3,
+      "centering_issue": false,
+      "creases": false,
+      "stains": false,
+      "notes": "Multiple prominent white scratch marks across surface; minor corner whitening; moderate edge wear."
+    }
+  },
+  "hp": {
+    "file": "fixtures/card_hp.png",
+    "expected_condition": "HP",
+    "vision_analysis": {
+      "corner_whitening": 0.8,
+      "back_whitening": 0.8,
+      "surface_scratches": 0.8,
+      "edge_wear": 0.8,
+      "centering_issue": false,
+      "creases": false,
+      "stains": false,
+      "notes": "Heavily scratched surface with significant corner whitening and edge fraying."
+    }
+  },
+  "dmg": {
+    "file": "fixtures/card_dmg.png",
+    "expected_condition": "DMG",
+    "vision_analysis": {
+      "corner_whitening": 1.0,
+      "back_whitening": 0.0,
+      "surface_scratches": 0.7,
+      "edge_wear": 1.0,
+      "centering_issue": false,
+      "creases": true,
+      "stains": true,
+      "notes": "Catastrophically damaged with horizontal tear/crease, severe corner whitening, heavy edge wear, brown staining."
+    }
+  }
+}
