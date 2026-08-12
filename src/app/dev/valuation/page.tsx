@@ -7,7 +7,7 @@
 //
 // Visit: /dev/valuation
 
-import { ValuationResultView } from "@/components/valuation/ValuationParts";
+import { ValuationResultView, VendorValuationView } from "@/components/valuation/ValuationParts";
 import {
   FULL_CURVE,
   FULL_POINTS,
@@ -97,6 +97,17 @@ export default function ValuationDevPage() {
           curve={null}
           points={null}
         />
+      </Section>
+
+      <Section title="7 · Vendor share view — simulated 375px phone (T18.9)">
+        <div style={{ width: 375, margin: "0 auto", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
+          <VendorValuationView
+            identity={DONE.card_identity}
+            curve={FULL_CURVE}
+            points={FULL_POINTS}
+            lastUpdated={DONE.created_at}
+          />
+        </div>
       </Section>
     </div>
   );

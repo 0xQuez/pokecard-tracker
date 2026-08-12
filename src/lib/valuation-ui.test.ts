@@ -10,12 +10,15 @@ import {
   buildSources,
   confidenceFor,
   deriveCurveRows,
+  fetchSharedValuation,
   findRecentValuation,
   formatTimestamp,
   identityTitle,
   isRecent,
   money,
   queueValuation,
+  regenerateShareToken,
+  shareLink,
   statusMeta,
   type SupabaseClientLike,
   type ValuationRequestRow,
@@ -276,4 +279,68 @@ test("findRecentValuation: returns null when nothing matches", async () => {
   const client = makeMockClient({ recentRows: [] });
   const found = await findRecentValuation(client, { cardQuery: "Mewtwo" });
   assert.equal(found, null);
+});
+
+// ── shareLink / fetchSharedValuation / regenerateShareToken (T18.9) ─────────
+
+test("shareLink: builds an absolute, encoded share URL from a token", () => {
+  assert.equal(shareLink("abc123", "https://app.example.com"), "https://app.example.com/valuation/share/abc123");
+  assert.equal(shareLink("abc 123", "https://app.example.com/"), "https://app.example.com/valuation/share/abc%20123");
+  assert.equal(shareLink(null, "https://x.com"), null);
+  assert.equal(shareLink("", "https://x.com"), null);
+});
+
+function rpcClient(row: ValuationResultRow | null, err: { message: string } | null): SupabaseClientLike {
+  return {
+    rpc(_fn: string) {
+      return Promise.resolve({ data: row ? [row] : [], error: err });
+    },
+  };
+}
+
+test("fetchSharedValuation: returns the row for a valid token", async () => {
+  const result = { id: 7, request_id: 7, card_identity: { name: "Dragonite ex" }, share_token: "tok" } as ValuationResultRow;
+  const out = await fetchSharedValuation(rpcClient(result, null), "tok");
+  assert.equal(out.error, null);
+  assert.equal(out.result?.id, 7);
+});
+
+test("fetchSharedValuation: invalid/revoked token returns null result + friendly error", async () => {
+  const out = await fetchSharedValuation(rpcClient(null, null), "old-token");
+  assert.equal(out.result, null);
+  assert.match(out.error!, /revoked|invalid/i);
+});
+
+test("fetchSharedValuation: surfaces an RPC error", async () => {
+  const out = await fetchSharedValuation(rpcClient(null, { message: "connection reset" }), "tok");
+  assert.equal(out.result, null);
+  assert.match(out.error!, /connection reset/);
+});
+
+test("fetchSharedValuation: missing/empty token short-circuits", async () => {
+  const out = await fetchSharedValuation(rpcClient(null, null), "   ");
+  assert.equal(out.result, null);
+  assert.ok(out.error);
+});
+
+test("regenerateShareToken: posts to the server route and returns the new token", async () => {
+  const fetchImpl = (async (url: string, init?: { body?: string }) => {
+    assert.equal(url, "/api/valuation/regenerate-share");
+    assert.equal(JSON.parse(init?.body ?? "{}").resultId, 7);
+    return {
+      ok: true,
+      json: async () => ({ shareToken: "new-token" }),
+    } as Response;
+  }) as typeof fetch;
+  const out = await regenerateShareToken(7, fetchImpl);
+  assert.equal(out.kind, "ok");
+  if (out.kind === "ok") assert.equal(out.shareToken, "new-token");
+});
+
+test("regenerateShareToken: surfaces a non-2xx response", async () => {
+  const fetchImpl = (async () =>
+    ({ ok: false, json: async () => ({ error: "not found" }) }) as Response) as typeof fetch;
+  const out = await regenerateShareToken(7, fetchImpl);
+  assert.equal(out.kind, "error");
+  if (out.kind === "error") assert.match(out.message, /not found/);
 });

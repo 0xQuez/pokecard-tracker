@@ -3,14 +3,16 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { ValuationResultView } from "./ValuationParts";
-import type {
-  CardIdentityJson,
-  ConditionCurveJson,
-  PricePointJson,
-  SupabaseClientLike,
-  ValuationRequestRow,
-  ValuationResultRow,
-  ValuationStatus,
+import {
+  regenerateShareToken,
+  type CardIdentityJson,
+  type ConditionCurveJson,
+  type PricePointJson,
+  type RegenerateShareOutcome,
+  type SupabaseClientLike,
+  type ValuationRequestRow,
+  type ValuationResultRow,
+  type ValuationStatus,
 } from "@/lib/valuation-ui";
 
 export interface ValuationResultCardProps {
@@ -22,6 +24,8 @@ export interface ValuationResultCardProps {
   client?: SupabaseClientLike;
   /** Called when the user hits "Re-run". */
   onReRun?: () => void;
+  /** Injectable token rotation (tests). Defaults to the real server route call. */
+  regenerateShare?: (resultId: number) => Promise<RegenerateShareOutcome>;
 }
 
 interface Loaded {
@@ -40,6 +44,7 @@ export default function ValuationResultCard({
   imageUrl,
   client = supabase,
   onReRun,
+  regenerateShare,
 }: ValuationResultCardProps) {
   const [state, setState] = useState<Loaded>({
     request: null,
@@ -143,6 +148,19 @@ export default function ValuationResultCard({
   const curve = (state.result?.condition_curve as ConditionCurveJson | null) ?? null;
   const points = (state.result?.price_points as PricePointJson[] | null) ?? null;
 
+  const handleRegenerate = async (): Promise<RegenerateShareOutcome> => {
+    if (!state.result) {
+      return { kind: "error", message: "No valuation result yet." };
+    }
+    const out = await (regenerateShare ?? ((id: number) => regenerateShareToken(id)))(state.result.id);
+    if (out.kind === "ok") {
+      setState((s) =>
+        s.result ? { ...s, result: { ...s.result, share_token: out.shareToken } } : s
+      );
+    }
+    return out;
+  };
+
   return (
     <ValuationResultView
       status={state.request.status as ValuationStatus}
@@ -153,6 +171,8 @@ export default function ValuationResultCard({
       imageUrl={imageUrl}
       lastUpdated={state.result?.created_at ?? state.request.completed_at}
       onReRun={onReRun}
+      shareToken={state.result?.share_token ?? null}
+      onRegenerate={handleRegenerate}
     />
   );
 }

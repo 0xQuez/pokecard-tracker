@@ -27,6 +27,15 @@
   --clay: #D6A285;            /* owed / outflow */
   --moss: #7FA176;            /* inflow / profit */
 
+  /* --- Aliases used by the valuation UI / share view ---
+     These components reference --ink / --surface / --border / --gold / --bg.
+     Bind them to the design-system tokens so they resolve to the real palette. */
+  --ink: var(--text-hi);
+  --surface: var(--surface-1);
+  --border: var(--line);
+  --gold: #E3C77C;            /* grading accent */
+  --bg: var(--bg-0);
+
   --grad-hero: radial-gradient(120% 140% at 20% 0%, #1B2A1D 0%, #121A13 45%, #0E1410 100%);
   --grad-sage: linear-gradient(135deg, #A6C49B 0%, #7FA176 100%);
   --grad-sand: linear-gradient(135deg, #E2D3AE 0%, #C9B585 100%);

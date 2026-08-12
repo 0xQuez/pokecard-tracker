@@ -44,6 +44,7 @@ function result(): ValuationResultRow {
       DMG: { estimated_price: 240, sample_count: 3 },
     },
     created_at: "2026-08-12T10:03:00Z",
+    share_token: "tok-9",
   };
 }
 
@@ -155,5 +156,45 @@ describe("ValuationResultCard", () => {
     };
     render(<ValuationResultCard valuationId={9} client={client as any} />);
     expect(await screen.findByTestId("valuation-error")).toHaveTextContent(/network down/);
+  });
+
+  it("shows the Share with vendor controls on a completed result", async () => {
+    const cap: RealtimeCapture = { update: null, channelName: null, removedChannels: [] };
+    const client = makeRealtimeClient({ request: request("done"), result: result() }, cap);
+    render(<ValuationResultCard valuationId={9} client={client} />);
+
+    await screen.findByText(/Dragonite ex/i);
+    expect(screen.getByTestId("share-with-vendor")).toBeTruthy();
+    expect(screen.getByTestId("regenerate-link")).toBeTruthy();
+  });
+
+  it("copies the share link when 'Share with vendor' is clicked", async () => {
+    const cap: RealtimeCapture = { update: null, channelName: null, removedChannels: [] };
+    const client = makeRealtimeClient({ request: request("done"), result: result() }, cap);
+    // jsdom has no navigator.clipboard; the fallback resolves silently, so we
+    // assert the visible "copied" feedback appears.
+    render(<ValuationResultCard valuationId={9} client={client} />);
+    await screen.findByText(/Dragonite ex/i);
+    screen.getByTestId("share-with-vendor").click();
+    expect(await screen.findByText(/Link copied/i)).toBeTruthy();
+  });
+
+  it("regenerates the token on demand and reports the rotation", async () => {
+    const cap: RealtimeCapture = { update: null, channelName: null, removedChannels: [] };
+    const client = makeRealtimeClient({ request: request("done"), result: result() }, cap);
+    const regenerateShare = vi.fn(async () => ({ kind: "ok", shareToken: "tok-new" } as const));
+    render(
+      <ValuationResultCard
+        valuationId={9}
+        client={client}
+        regenerateShare={regenerateShare as any}
+      />
+    );
+    await screen.findByText(/Dragonite ex/i);
+    act(() => {
+      screen.getByTestId("regenerate-link").click();
+    });
+    expect(await screen.findByTestId("regenerate-ok")).toHaveTextContent(/new link created/i);
+    expect(regenerateShare).toHaveBeenCalledWith(9);
   });
 });

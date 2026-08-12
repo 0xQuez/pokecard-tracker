@@ -20,6 +20,10 @@ export interface MockClientConfig {
   result: ValuationResultRow | null;
   /** Initial DB state that realtime UPDATEs should write. */
   setRequest?: (r: ValuationRequestRow | null) => void;
+  /** Value returned by rpc('get_valuation_by_share_token') — the share page read. */
+  sharedValuation?: ValuationResultRow | null;
+  /** When set, rpc('get_valuation_by_share_token') resolves as an error. */
+  rpcError?: string | null;
 }
 
 /**
@@ -72,6 +76,16 @@ export function makeRealtimeClient(
     },
     removeChannel(_channel: unknown) {
       capture.removedChannels.push(capture.channelName ?? "");
+    },
+    rpc(fn: string, _args: unknown) {
+      if (fn === "get_valuation_by_share_token") {
+        if (config.rpcError) {
+          return Promise.resolve({ data: null, error: { message: config.rpcError } });
+        }
+        const data = config.sharedValuation ? [config.sharedValuation] : [];
+        return Promise.resolve({ data, error: null });
+      }
+      return Promise.resolve({ data: null, error: { message: `unhandled rpc: ${fn}` } });
     },
   };
 }

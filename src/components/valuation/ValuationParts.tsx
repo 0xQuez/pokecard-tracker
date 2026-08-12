@@ -1,9 +1,12 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import type {
   CardIdentityJson,
   Confidence,
   CurveRow,
+  RegenerateShareOutcome,
   SourceRow,
   ValuationStatus,
 } from "@/lib/valuation-ui";
@@ -13,6 +16,7 @@ import {
   formatTimestamp,
   identityTitle,
   money,
+  shareLink,
   statusMeta,
   type ConditionCurveJson,
   type PricePointJson,
@@ -89,14 +93,15 @@ export function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
       data-testid="confidence-badge"
       data-level={confidence.level}
       style={{
-        display: "inline-block",
-        padding: "2px 8px",
+        display: "block",
+        padding: "2px 6px",
         borderRadius: 999,
         border: `1px solid ${color}`,
         color,
         fontSize: 10,
         fontWeight: 600,
-        whiteSpace: "nowrap",
+        lineHeight: 1.25,
+        textAlign: "center",
       }}
     >
       {confidence.label}
@@ -105,12 +110,16 @@ export function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
 }
 
 export function CurveTable({ rows }: { rows: CurveRow[] }) {
+  const narrow = useIsNarrow();
+  if (narrow) return <StackedCurveTable rows={rows} />;
   return (
     <div
       data-testid="curve-table"
       style={{
         display: "grid",
-        gridTemplateColumns: `repeat(${rows.length}, 1fr)`,
+        // minmax(0,1fr) lets columns shrink below their content min-width so all
+        // 5 condition columns always fit the container (critical on a 375px phone).
+        gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))`,
         gap: 6,
       }}
     >
@@ -122,8 +131,9 @@ export function CurveTable({ rows }: { rows: CurveRow[] }) {
           style={{
             background: "var(--surface)",
             borderRadius: 8,
-            padding: "8px 6px",
+            padding: "8px 4px",
             textAlign: "center",
+            minWidth: 0,
             border: r.hasData
               ? "1px solid var(--border)"
               : "1px dashed var(--border)",
@@ -138,6 +148,7 @@ export function CurveTable({ rows }: { rows: CurveRow[] }) {
               fontSize: 15,
               fontWeight: 700,
               marginTop: 2,
+              whiteSpace: "nowrap",
               color: r.hasData ? "var(--ink)" : "var(--text-low)",
             }}
           >
@@ -153,6 +164,72 @@ export function CurveTable({ rows }: { rows: CurveRow[] }) {
       ))}
     </div>
   );
+}
+
+/**
+ * Vertical, full-width curve rows for narrow screens (phones). Each condition is
+ * its own readable row — the 5-column grid is too cramped below ~520px (long
+ * words like "confidence" overflow the ~60px cells).
+ */
+function StackedCurveTable({ rows }: { rows: CurveRow[] }) {
+  return (
+    <div data-testid="curve-table" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {rows.map((r) => (
+        <div
+          key={r.condition}
+          data-testid={`curve-${r.condition}`}
+          data-has-data={r.hasData}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            background: "var(--surface)",
+            borderRadius: 8,
+            padding: "10px 12px",
+            border: r.hasData ? "1px solid var(--border)" : "1px dashed var(--border)",
+            opacity: r.hasData ? 1 : 0.6,
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-mid)", width: 40, flexShrink: 0 }}>
+            {r.condition}
+          </div>
+          <div
+            style={{
+              fontSize: 16,
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+              color: r.hasData ? "var(--ink)" : "var(--text-low)",
+              minWidth: 0,
+            }}
+          >
+            {r.hasData ? money(r.estimatedPrice) : "—"}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-low)", whiteSpace: "nowrap" }}>
+            {r.sampleCount ? `${r.sampleCount} sample${r.sampleCount === 1 ? "" : "s"}` : "no samples"}
+          </div>
+          <div style={{ marginLeft: "auto", flexShrink: 0 }}>
+            <ConfidenceBadge confidence={r.confidence} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** True below 520px (phones). Falls back to the wide layout when matchMedia is unavailable. */
+function useIsNarrow(): boolean {
+  const [narrow, setNarrow] = useState<boolean>(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia("(max-width: 520px)").matches;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mql = window.matchMedia("(max-width: 520px)");
+    const onChange = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+  return narrow;
 }
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -293,6 +370,12 @@ export interface ResultCardViewProps {
   imageUrl?: string | null;
   lastUpdated?: string | null;
   onReRun?: () => void;
+  /** Valuation's share token — shows the "Share with vendor" controls when present. */
+  shareToken?: string | null;
+  /** Rotate the share token (revokes old links). */
+  onRegenerate?: () => Promise<RegenerateShareOutcome>;
+  /** Injectable clipboard writer (tests). */
+  shareCopy?: (text: string) => Promise<void> | void;
 }
 
 /**
@@ -303,7 +386,6 @@ export function ValuationResultView(props: ResultCardViewProps) {
   const rows = deriveCurveRows(props.curve, props.points);
   const sources = buildSources(props.points);
   const done = props.status === "done";
-
   return (
     <div
       data-testid="valuation-result-card"
@@ -331,6 +413,14 @@ export function ValuationResultView(props: ResultCardViewProps) {
             Sources
           </div>
           <SourceList rows={sources} />
+
+          {props.shareToken && (
+            <ShareControls
+              shareToken={props.shareToken}
+              onRegenerate={props.onRegenerate}
+              copy={props.shareCopy}
+            />
+          )}
 
           <div
             style={{
@@ -382,4 +472,231 @@ function statusSpinnerNote(status: ValuationStatus): string {
     default:
       return "";
   }
+}
+
+// ── Share with vendor (T18.9) ───────────────────────────────────────────────
+
+export interface ShareControlsProps {
+  /** The valuation's share token (unlocks the public /valuation/share/<token> page). */
+  shareToken: string | null | undefined;
+  /** Page origin used to build the absolute share URL. Defaults to window.location.origin. */
+  origin?: string;
+  /** Rotate the token. Returns the new token on success. Optional — hides "Regenerate" when absent. */
+  onRegenerate?: () => Promise<RegenerateShareOutcome>;
+  /** Injectable clipboard writer for tests. Defaults to navigator.clipboard. */
+  copy?: (text: string) => Promise<void> | void;
+}
+
+/**
+ * "Share with vendor" + "Regenerate link". Copies the public share URL to the
+ * clipboard, and lets the owner rotate the token (which revokes old links).
+ */
+export function ShareControls({ shareToken, origin, onRegenerate, copy }: ShareControlsProps) {
+  const [copied, setCopied] = useState(false);
+  const [regen, setRegen] = useState<"idle" | "working" | "done" | "error">("idle");
+  const [regenMsg, setRegenMsg] = useState("");
+
+  const originVal = origin ?? (typeof window !== "undefined" ? window.location.origin : "");
+  const link = shareLink(shareToken, originVal);
+  const hasToken = Boolean(link);
+
+  const writeClipboard = copy ?? ((text: string) => {
+    if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+    return Promise.resolve();
+  });
+
+  const handleCopy = async () => {
+    if (!link) return;
+    await writeClipboard(link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleRegenerate = async () => {
+    if (!onRegenerate) return;
+    setRegen("working");
+    setRegenMsg("");
+    const out = await onRegenerate();
+    if (out.kind === "ok") {
+      setRegen("done");
+      setRegenMsg("New link created — the old one is revoked.");
+    } else {
+      setRegen("error");
+      setRegenMsg(out.message);
+    }
+  };
+
+  if (!hasToken) {
+    return (
+      <div data-testid="share-controls" data-token="missing" style={{ fontSize: 12, color: "var(--text-low)" }}>
+        Share link unavailable.
+      </div>
+    );
+  }
+
+  return (
+    <div
+      data-testid="share-controls"
+      data-token="present"
+      style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}
+    >
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          data-testid="share-with-vendor"
+          onClick={handleCopy}
+          className="cta"
+          style={{ flex: 1, margin: 0, padding: "8px 12px", fontSize: 13 }}
+        >
+          {copied ? "✓ Link copied" : "↗ Share with vendor"}
+        </button>
+        {onRegenerate && (
+          <button
+            data-testid="regenerate-link"
+            onClick={handleRegenerate}
+            disabled={regen === "working"}
+            style={{
+              padding: "8px 12px",
+              fontSize: 12,
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              color: "var(--text-mid)",
+              background: "transparent",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {regen === "working" ? "Rotating…" : "Regenerate link"}
+          </button>
+        )}
+      </div>
+      {regen === "done" && (
+        <div data-testid="regenerate-ok" style={{ fontSize: 12, color: "var(--sage)" }}>
+          {regenMsg}
+        </div>
+      )}
+      {regen === "error" && (
+        <div data-testid="regenerate-error" style={{ fontSize: 12, color: "var(--clay)" }}>
+          {regenMsg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Vendor-facing share page (T18.9) ────────────────────────────────────────
+
+export interface VendorValuationViewProps {
+  identity: CardIdentityJson | null;
+  curve: ConditionCurveJson | null;
+  points: PricePointJson[] | null;
+  imageUrl?: string | null;
+  lastUpdated?: string | null;
+}
+
+/**
+ * The headline "condition-appropriate estimated market value". Defaults to the
+ * NM estimate (raw cards are conventionally priced near-mint); falls back to the
+ * first condition (NM→DMG) that has an estimate.
+ */
+export function headlineValue(curve: ConditionCurveJson | null | undefined): {
+  condition: string;
+  price: number | null;
+  sampleCount: number | null;
+} {
+  const order: { cond: string; key: "NM" | "LP" | "MP" | "HP" | "DMG" }[] = [
+    { cond: "Near Mint", key: "NM" },
+    { cond: "Lightly Played", key: "LP" },
+    { cond: "Moderately Played", key: "MP" },
+    { cond: "Heavily Played", key: "HP" },
+    { cond: "Damaged", key: "DMG" },
+  ];
+  for (const o of order) {
+    const cell = curve?.[o.key];
+    const price = cell?.estimated_price ?? null;
+    if (typeof price === "number" && !Number.isNaN(price)) {
+      return { condition: o.cond, price, sampleCount: cell?.sample_count ?? null };
+    }
+  }
+  return { condition: "Near Mint", price: null, sampleCount: null };
+}
+
+/**
+ * Minimal, deliberately plain single-page layout for the vendor share view.
+ * No app chrome/nav — just identity, a big number, the per-condition curve,
+ * clickable sources, and a "data as of" footer.
+ */
+export function VendorValuationView({
+  identity,
+  curve,
+  points,
+  imageUrl,
+  lastUpdated,
+}: VendorValuationViewProps) {
+  const rows = deriveCurveRows(curve, points);
+  const sources = buildSources(points);
+  const head = headlineValue(curve);
+
+  return (
+    <div
+      data-testid="vendor-valuation-view"
+      style={{
+        maxWidth: 480,
+        margin: "0 auto",
+        padding: 24,
+        background: "var(--bg-0)",
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--text-low)", marginBottom: 12 }}>
+        Estimated market value
+      </div>
+
+      <CardHeader identity={identity} imageUrl={imageUrl} />
+
+      {/* Big number */}
+      <div
+        data-testid="headline-value"
+        style={{
+          borderRadius: 12,
+          padding: "20px 16px",
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          textAlign: "center",
+          marginTop: 4,
+        }}
+      >
+        <div
+          className="amount"
+          style={{ fontSize: 40, fontWeight: 700, color: "var(--ink)", lineHeight: 1 }}
+        >
+          {money(head.price)}
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-mid)", marginTop: 6 }}>
+          {head.condition}
+          {head.sampleCount ? ` · ${head.sampleCount} sample${head.sampleCount === 1 ? "" : "s"}` : ""}
+        </div>
+      </div>
+
+      <div style={{ fontSize: 13, fontWeight: 600, margin: "20px 0 8px", color: "var(--ink)" }}>
+        Per-condition estimates
+      </div>
+      <CurveTable rows={rows} />
+
+      <div style={{ fontSize: 13, fontWeight: 600, margin: "20px 0 8px", color: "var(--ink)" }}>
+        Sources
+      </div>
+      <SourceList rows={sources} />
+
+      <div
+        style={{
+          marginTop: 24,
+          paddingTop: 12,
+          borderTop: "1px dashed var(--border)",
+          fontSize: 11,
+          color: "var(--text-low)",
+          textAlign: "center",
+        }}
+      >
+        Data as of {formatTimestamp(lastUpdated)}
+      </div>
+    </div>
+  );
 }

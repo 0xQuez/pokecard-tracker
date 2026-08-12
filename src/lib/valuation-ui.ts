@@ -71,6 +71,8 @@ export interface ValuationResultRow {
   price_points: PricePointJson[] | null;
   condition_curve: ConditionCurveJson | null;
   created_at: string;
+  /** Unguessable token that unlocks the vendor-facing /valuation/share/<token> page. */
+  share_token?: string | null;
 }
 
 export const CONDITIONS: CardCondition[] = ["NM", "LP", "MP", "HP", "DMG"];
@@ -367,4 +369,72 @@ export async function findRecentValuation(
     }
   }
   return null;
+}
+
+// ── Vendor-facing share (T18.9) ─────────────────────────────────────────────
+
+/** Build the public share URL for a valuation's share token. */
+export function shareLink(token: string | null | undefined, origin: string): string | null {
+  if (!token || !token.trim()) return null;
+  return `${origin.replace(/\/$/, "")}/valuation/share/${encodeURIComponent(token.trim())}`;
+}
+
+/**
+ * Fetch a valuation result by its share token. The ONLY public read path for a
+ * shared result — a server-side security-definer RPC that returns at most the
+ * single row whose token matches (see supabase/migrations/004_valuation_share.sql).
+ * Returns the row, or null when the token is invalid / the link was revoked.
+ */
+export async function fetchSharedValuation(
+  client: SupabaseClientLike,
+  token: string
+): Promise<{ result: ValuationResultRow | null; error: string | null }> {
+  if (!token || !token.trim()) {
+    return { result: null, error: "This valuation link is missing its share token." };
+  }
+  const { data, error } = await client.rpc("get_valuation_by_share_token", {
+    p_token: token.trim(),
+  });
+  if (error) return { result: null, error: error.message || "Failed to load this valuation." };
+  const rows = Array.isArray(data) ? (data as ValuationResultRow[]) : [];
+  const result = rows[0] ?? null;
+  if (!result) {
+    return { result: null, error: "This valuation link is invalid or has been revoked." };
+  }
+  return { result, error: null };
+}
+
+export type RegenerateShareOutcome =
+  | { kind: "ok"; shareToken: string }
+  | { kind: "error"; message: string };
+
+/**
+ * Rotate a valuation's share token (revokes previously-shared links). The anon
+ * key cannot call the regenerate RPC, so this goes through a service-role server
+ * route. `fetchImpl` is injectable for tests.
+ */
+export async function regenerateShareToken(
+  resultId: number,
+  fetchImpl: typeof fetch = fetch
+): Promise<RegenerateShareOutcome> {
+  try {
+    const res = await fetchImpl("/api/valuation/regenerate-share", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resultId }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { kind: "error", message: body?.error || "Could not regenerate the share link." };
+    }
+    if (!body?.shareToken) {
+      return { kind: "error", message: "Could not regenerate the share link." };
+    }
+    return { kind: "ok", shareToken: body.shareToken as string };
+  } catch (e) {
+    return {
+      kind: "error",
+      message: e instanceof Error ? e.message : "Could not regenerate the share link.",
+    };
+  }
 }

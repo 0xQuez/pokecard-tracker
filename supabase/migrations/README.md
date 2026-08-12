@@ -37,7 +37,29 @@ Frontend (anon key) reads its result back
 | `valuation_requests` | The queue. One row per user request; status drives claiming. |
 | `valuation_results` | The result. One row per completed request (unique `request_id`). |
 | `claim_next_valuation_request(worker_name)` | Atomic claim RPC for workers. See below. |
+| `get_valuation_by_share_token(p_token)` | Token-gated read RPC for the vendor-facing share page. |
+| `regenerate_valuation_share_token(p_result_id)` | Service-role-only RPC that rotates a result's share token. |
 | index `idx_valuation_requests_claim` | `(status, priority desc, created_at asc)` — the worker's claim query. |
+| index `idx_valuation_results_share_token` | Unique index backing the O(1) share-token lookup. |
+
+## Vendor-facing share (004)
+
+Each `valuation_results` row gets an unguessable `share_token` (a UUID, defaulted
+in the DB so every result is shareable immediately on insert). The public share
+page at `/valuation/share/<token>` is read-only and shows ONLY that valuation:
+
+- The **only** anonymous read path is the security-definer RPC
+  `get_valuation_by_share_token(p_token)` — it returns at most the single row
+  whose token matches, so a bad/revoked token leaks nothing. The share page
+  calls it with the anon key.
+- **Rotating** a link (the "Regenerate link" button) is a write, so the anon
+  key is NOT granted it. `regenerate_valuation_share_token(p_result_id)` is
+  granted to `service_role` only and is reached through the server route
+  `POST /api/valuation/regenerate-share` (see `src/app/api/valuation/regenerate-share/route.ts`).
+  Changing the token revokes every previously-shared link for that result.
+- The owner's own result card still reads its result directly with the anon key
+  (the app has no real Supabase Auth — see the 003 note). Scoping that owner
+  read per-row is the follow-up when real `auth.uid()` lands.
 
 ## How a worker claims
 
@@ -77,9 +99,9 @@ Then:
 
 ## Running the migration
 
-Apply in Supabase Dashboard > **SQL Editor** (paste `003_valuation_requests.sql`),
-or if the Supabase CLI is wired up, `supabase db push`. It is idempotent —
-safe to run more than once.
+Apply in Supabase Dashboard > **SQL Editor** (paste `003_valuation_requests.sql`
+then `004_valuation_share.sql`), or if the Supabase CLI is wired up,
+`supabase db push`. Each is idempotent — safe to run more than once.
 
 ## Concurrency note
 

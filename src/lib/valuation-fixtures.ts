@@ -125,6 +125,7 @@ export function makeResult(
     price_points: FULL_POINTS,
     condition_curve: FULL_CURVE,
     created_at: "2026-08-12T10:03:00Z",
+    share_token: `tok-${requestId}`,
     ...over,
   };
 }
