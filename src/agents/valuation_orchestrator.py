@@ -173,13 +173,22 @@ class PsqlSupabasePort(SupabasePort):
         self.psql = psql
 
     def _run(self, sql: str, *args: Any) -> str:
-        full = sql if not args else sql
-        for a in args:
-            full = full.replace("?", repr(a) if isinstance(a, str) else str(a), 1)
+        # Bind args into the SQL template. Split the TEMPLATE on its `?`
+        # placeholders first, then join with the (repr'd) values — this is safe
+        # even when a value itself contains a literal `?` (e.g. a real eBay URL
+        # with a query string), which a naive sequential .replace() would clobber.
+        parts = sql.split("?")
+        if len(parts) - 1 != len(args):
+            raise ValueError(
+                f"psql placeholder mismatch: {len(parts)-1} placeholders vs "
+                f"{len(args)} args: {sql[:120]!r}")
+        out = parts[0]
+        for a, rest in zip(args, parts[1:]):
+            out += (repr(a) if isinstance(a, str) else str(a)) + rest
         cmd = [self.psql]
         if self.conn:
             cmd += [self.conn]
-        cmd += ["-X", "-q", "-t", "-A", "-c", full]
+        cmd += ["-X", "-q", "-t", "-A", "-c", out]
         return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
 
     def claim_next(self, worker_name: str) -> Optional[Dict[str, Any]]:
@@ -541,20 +550,19 @@ def _fail(env: AgentEnv, rid: Any, message: str) -> None:
 def build_env(supabase: Optional[SupabasePort] = None, **overrides: Any) -> AgentEnv:
     """Construct a default AgentEnv. `overrides` become AgentEnv fields.
 
-    The production entry point: wires real fetch_page (needs a live fetch layer
-    from the agent's web_extract / browser tools). Without overrides, fetch_page
-    is a stub that raises so a miswired live run fails loudly instead of silently
-    returning empty data.
+    The production entry point wires a real `fetch_page`: eBay goes through the
+    local CDP browser (T18.10) and TCGPlayer through Firecrawl, so a plain
+    `python -m src.agents.valuation_orchestrator` run drives the whole pipeline
+    with no agent hands-on. Requires the CDP browser up (start-agent-browser.sh)
+    and FIRECRAWL_API_KEY set. Callers can still override fetch_page / vision /
+    resolve_identity for test or agent-loop modes.
     """
     if supabase is None:
         supabase = RestSupabasePort()
-    def _no_fetch(url: str) -> str:
-        raise RuntimeError(
-            "fetch_page not wired: supply env.fetch_page (web_extract/browser) "
-            f"before running; attempted {url}")
+    from cdp_fetch import fetch_page as _cdp_fetch_page
     return AgentEnv(
         supabase=supabase,
-        fetch_page=overrides.pop("fetch_page", _no_fetch),
+        fetch_page=overrides.pop("fetch_page", _cdp_fetch_page),
         vision=overrides.pop("vision",
                              lambda u: (_ for _ in ()).throw(
                                  RuntimeError("vision not wired"))),

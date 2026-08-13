@@ -120,7 +120,12 @@ def _norm_variant(v: str) -> str:
 
 
 def search_url(query: str) -> str:
-    return SEARCH_URL.format(query=query.replace(" ", "%20"))
+    # Properly percent-encode the whole query. The legacy `replace(" ", "%20")`
+    # left characters like `&` (e.g. "Scarlet & Violet") unencoded, which
+    # truncated the URL at the ampersand and broke the scrape. `/` stays
+    # literal to preserve existing card-number paths (90/97).
+    from urllib.parse import quote
+    return SEARCH_URL.format(query=quote(query, safe="/"))
 
 
 def product_url_from_id(pid: str) -> str:

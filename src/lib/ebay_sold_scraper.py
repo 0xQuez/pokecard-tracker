@@ -178,11 +178,22 @@ def build_detail_url(item_id: str) -> str:
 # Block / CAPTCHA detection
 # --------------------------------------------------------------------------
 
+_BLOCK_STYLE_SCRIPT_RE = re.compile(
+    r"<(style|script|iframe)[\s\S]*?</\1>", re.IGNORECASE
+)
+
 def is_blocked(content: Optional[str]) -> bool:
-    """True if the fetched page is a bot-wall / error page, not results."""
+    """True if the fetched page is a bot-wall / error page, not results.
+
+    Signals are matched against the *rendered body text*, not the raw HTML:
+    eBay's real pages embed CSS/JS that mention captcha/verification (e.g. the
+    ``.ifh-captcha`` widget styles), which would otherwise false-positive on a
+    perfectly good results page. Stripping <style>/<script> blocks keeps only
+    visible content, where genuine "Pardon Our Interruption" walls appear.
+    """
     if not content:
         return False
-    low = content.lower()
+    low = _BLOCK_STYLE_SCRIPT_RE.sub(" ", content).lower()
     for sig in BLOCK_SIGNALS:
         if sig in low:
             return True
@@ -430,6 +441,119 @@ def _first_item_url(text: str) -> Optional[str]:
 
 
 # --------------------------------------------------------------------------
+# Current-gen search page parser (`.s-card` / `.srp-results` DOM)
+# --------------------------------------------------------------------------
+# eBay's current SRP renders each result as <li class="s-card ..."> inside
+# <ul class="srp-results srp-list clearfix">. The legacy `.s-item` cards no
+# longer appear on live pages (T18.10). These helpers parse the `.s-card`
+# structure directly from raw HTML via class-anchored regexes.
+
+_SCARD_ITEM_RE = re.compile(r'<li\s+class="s-card[\s\S]*?</li>', re.IGNORECASE)
+_SCARD_TITLE_RE = re.compile(
+    r'class="s-card__title"[^>]*>([\s\S]*?)</div>', re.IGNORECASE)
+_SCARD_CAPTION_RE = re.compile(
+    r'aria-label="Sold Item"[^>]*>\s*([\s\S]*?)</span>', re.IGNORECASE)
+_SCARD_PRICE_RE = re.compile(
+    r'class="[^"]*s-card__price[^"]*"[^>]*>\s*([^<]+?)\s*</span>', re.IGNORECASE)
+_SCARD_CONDITION_RE = re.compile(
+    r'class="s-card__subtitle"[^>]*>([\s\S]*?)</div>', re.IGNORECASE)
+_SCARD_SHIPPING_RE = re.compile(
+    r'class="[^"]*s-card__attribute-row[^"]*"[^>]*>\s*'
+    r'<span[^>]*>\s*([+$][^<]*shipping[^<]*?)\s*</span>', re.IGNORECASE)
+_SCARD_LOCATION_RE = re.compile(
+    r'Located in\s*([A-Za-z ]+?)\s*</', re.IGNORECASE)
+_SCARD_OFFER_RE = re.compile(
+    r'Best offer accepted', re.IGNORECASE)
+_SCARD_SELLER_RE = re.compile(
+    r'([A-Za-z0-9_.-]{2,40})\s*</span>\s*<span[^>]*>\s*'
+    r'(\d+(?:\.\d+)?)%\s*positive\s*\((\d+)\)', re.IGNORECASE)
+
+
+def _strip_tags(s: str) -> str:
+    return _clean_text(_html.unescape(re.sub(r"<[^>]+>", " ", s)))
+
+
+def _extract_s_card_blocks(html_text: str) -> List[str]:
+    """Split the SRP page into individual `.s-card` item blocks (raw HTML)."""
+    blocks: List[str] = []
+    for m in _SCARD_ITEM_RE.finditer(html_text):
+        block = m.group(0)
+        # Skip the "result item" wrappers that are not real listings
+        # (no s-card__title).
+        if "s-card__title" not in block:
+            continue
+        blocks.append(block)
+    return blocks
+
+
+def _parse_s_card_block(block: str) -> Optional[Dict[str, Any]]:
+    """Parse one `.s-card` listing block into the shared listing schema."""
+    tm = _SCARD_TITLE_RE.search(block)
+    title = _strip_tags(tm.group(1)) if tm else None
+    if not title:
+        return None
+    # eBay appends a screen-reader suffix to the visible title.
+    title = re.sub(r"\s*Opens in a new window or tab\s*$", "", title, flags=re.I)
+    # CTA / furniture cards carry the `s-card__title` class but aren't listings.
+    if title.lower() in ("shop on ebay", "search results", "sponsored"):
+        return None
+
+    pm = _SCARD_PRICE_RE.search(block)
+    price_text = _strip_tags(pm.group(1)) if pm else None
+    sold_price = _extract_price(price_text) if price_text else None
+    if sold_price is None:
+        if price_text and _price_is_range(price_text):
+            return None  # range/lot listing (decision rule #3)
+        return None
+
+    cm = _SCARD_CONDITION_RE.search(block)
+    cond_text = _strip_tags(cm.group(1)) if cm else ""
+    condition = classify_condition(cond_text) if cond_text else "unknown"
+
+    sm = _SCARD_SELLER_RE.search(block)
+    if sm:
+        seller = {"name": sm.group(1), "feedback_count": int(sm.group(3))}
+    else:
+        seller = {"name": "unknown", "feedback_count": None}
+
+    url = _first_item_url(block)
+    sold_at = _parse_sold_date(block)
+    is_best_offer = bool(_SCARD_OFFER_RE.search(block))
+
+    grade = _contains_grade(title)
+    is_graded = grade is not None or _is_graded_any(title)
+
+    # Photo is the card thumbnail on the search page; detail page is the real
+    # source of photos, but keep the thumbnail as a fallback anchor.
+    photos: List[str] = []
+    img = re.search(r'<img[^>]+class="s-card__image"[^>]+src="([^"]+)"', block)
+    if img:
+        photos.append(_html.unescape(img.group(1)))
+
+    flags: List[str] = []
+    if price_text and _price_is_range(price_text):
+        flags.append("range_price_skipped")
+    if is_best_offer:
+        flags.append("best_offer")
+
+    return {
+        "url": url,
+        "item_id": _item_id_from_url(url) if url else None,
+        "title": title,
+        "sold_price_usd": sold_price,
+        "listed_price_usd": sold_price,
+        "is_best_offer": is_best_offer,
+        "sold_at": sold_at,
+        "seller": seller,
+        "seller_condition_claim": condition,
+        "is_graded": is_graded,
+        "grade_info": grade,
+        "photo_urls": photos,
+        "flags": flags,
+    }
+
+
+# --------------------------------------------------------------------------
 # Search-results parser
 # --------------------------------------------------------------------------
 
@@ -449,15 +573,24 @@ def searchSoldListings(content: str, card_identity: Dict[str, Any],
 
     kind = _detect_content_kind(content) if content_kind == "auto" else content_kind
     if kind == "html":
-        cards = _extract_item_cards(content)
-        blocks = cards if cards else _split_markdown_blocks(content)
+        # Current-gen `.s-card` SRP page first; fall back to legacy `.s-item`
+        # cards, then to text-block heuristics.
+        scards = _extract_s_card_blocks(content)
+        if scards:
+            blocks = scards
+        else:
+            cards = _extract_item_cards(content)
+            blocks = cards if cards else _split_markdown_blocks(content)
     else:
         blocks = _split_markdown_blocks(content)
 
     results: List[Dict[str, Any]] = []
     seen_texts = set()
     for block in blocks:
-        listing = _parse_search_block(block)
+        if "s-card__title" in block:
+            listing = _parse_s_card_block(block)
+        else:
+            listing = _parse_search_block(block)
         if listing is None:
             continue
         key = (
@@ -683,7 +816,9 @@ def fetchListingDetail(content: str, url: str,
         else content
 
     title = _extract_detail_title(content, text)
-    price = _extract_detail_price(text)
+    # Price regexes are anchored on class attributes, so feed them the RAW HTML
+    # (the tag-stripped `text` loses the class markers).
+    price = _extract_detail_price(content)
     best_offer = _detect_best_offer(text)
     sold_at = _parse_sold_date(text)
     seller = _extract_detail_seller(text)
@@ -734,15 +869,23 @@ def _extract_detail_title(content: str, text: str) -> Optional[str]:
 
 
 def _extract_detail_price(text: str) -> Optional[float]:
-    # eBay item pages: x-price-primary / x-bin-price / ux-price
-    m = re.search(r"x-price-primary[^>]*>\s*([^<]{0,30}?\$[^<]{0,30}?)<",
-                  text, re.IGNORECASE)
-    if not m:
-        m = re.search(r"ux-price__value[^>]*>\s*([^<]{0,30}?\$[^<]{0,30}?)<",
-                      text, re.IGNORECASE)
-    src = m.group(1) if m else None
-    if src is None:
-        src = _find_price_text(text)
+    # Current eBay item pages show the primary price in the listing currency
+    # (e.g. "GBP 60.00" for a UK seller) plus an "approximately US $80.97"
+    # conversion. Prefer the USD figure when present so valuation math stays in
+    # US dollars; fall back to the primary price, then legacy markup.
+    for pat in (
+        r"x-price-approx__price[^>]*>([\s\S]{0,120}?US\s*\$[\s\S]{0,20}?)<",
+        r"x-price-primary[^>]*>([\s\S]{0,120}?\$[^<]{0,30}?)<",
+        r"x-bin-price__content[^>]*>([\s\S]{0,120}?\$[^<]{0,30}?)<",
+        r"ux-price__value[^>]*>\s*([^<]{0,30}?\$[^<]{0,30}?)<",
+    ):
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            src = m.group(1)
+            price = _parse_money(src)
+            if price is not None and not _price_is_range(src):
+                return price
+    src = _find_price_text(text)
     if not src:
         return None
     if _price_is_range(src):
@@ -758,16 +901,35 @@ def _extract_sold_winning_price(text: str) -> Optional[float]:
 
 
 def _extract_detail_seller(text: str) -> Dict[str, Any]:
-    # Raw-HTML path: the structured seller name element wins over prose.
-    m = re.search(r'seller-info__name[^>]*>\s*([^<]{2,40}?)\s*<', text,
-                  re.IGNORECASE)
+    # Current DOM: seller name appears in the seller-card link
+    # (https://www.ebay.com/sch/<name>/m.html?...) plus a "100% positive (N)"
+    # feedback string. Capture name first, then feedback.
+    name = None
+    m = re.search(
+        r"/sch/([A-Za-z0-9_.-]{2,40})/m\.html\?", text, re.IGNORECASE)
     if m:
         name = _clean_text(_html.unescape(m.group(1)))
-        fb = re.search(r'seller-info__feedback[^>]*>\s*[^<]*\(?([\d,]+)',
-                       text, re.IGNORECASE)
-        return {"name": name or "unknown",
-                "feedback_count": int(fb.group(1).replace(",", "")) if fb
-                else None}
+    if not name:
+        # Raw-HTML path: the structured seller name element wins over prose.
+        m = re.search(r'seller-info__name[^>]*>\s*([^<]{2,40}?)\s*<', text,
+                      re.IGNORECASE)
+        if m:
+            name = _clean_text(_html.unescape(m.group(1)))
+    feedback = None
+    # Detail pages render "guyvernoidxcollectingtcg (198) 100% positive" or a
+    # standalone "100% positive feedback". Grab the count in parens right
+    # before "% positive", falling back to the seller-name-adjacent paren.
+    m = re.search(r"\((\d[\d,]*)\)\s*\d*\.?\d*\s*%\s*positive", text, re.IGNORECASE)
+    if not m:
+        m = re.search(r"([A-Za-z0-9_.-]{2,40})\s*\((\d[\d,]*)\)\s*\d*\.?\d*\s*%", text, re.IGNORECASE)
+    if m:
+        grp = m.group(2) if m.lastindex == 2 else m.group(1)
+        try:
+            feedback = int(grp.replace(",", ""))
+        except ValueError:
+            feedback = None
+    if name:
+        return {"name": name, "feedback_count": feedback}
     # Text path: `Seller information PokeMaster99` etc.
     m = re.search(r"\bSeller\b\s+(?:information\s+)?"
                   r"([A-Za-z0-9_.-]{2,40})\b", text, re.IGNORECASE)

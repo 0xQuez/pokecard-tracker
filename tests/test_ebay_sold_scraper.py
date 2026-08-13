@@ -195,5 +195,98 @@ class TestCondition(unittest.TestCase):
         self.assertEqual(classify_condition("unknown thing here"), "unknown")
 
 
+class TestSCardSearchParse(unittest.TestCase):
+    """Current-gen eBay SRP: `.s-card` items inside `.srp-results` (T18.10)."""
+
+    def setUp(self):
+        self.ident = {"name": "Charmander 044", "card_number": "044",
+                      "set": "Scarlet & Violet Promo"}
+        self.html = _load("scard_search.html")
+        self.listings = searchSoldListings(self.html, self.ident)
+        self.final = applyRules(self.listings)
+
+    def test_parses_scard_candidates(self):
+        # 5 real cards in the fixture (no CTA/furniture blocks captured).
+        self.assertGreaterEqual(len(self.listings), 5)
+        titles = [L["title"] for L in self.listings]
+        self.assertIn("Charmander 044 - Scarlet & Violet - Obsidian Flames "
+                      "ETB PROMO SEALED", titles)
+
+    def test_scard_title_suffix_stripped(self):
+        for L in self.listings:
+            self.assertNotIn("Opens in a new window", L["title"])
+
+    def test_scard_price_and_sold_date(self):
+        # $80.97 best-offer sale, sold Aug 12 2026.
+        target = next(L for L in self.listings if L["item_id"] == "128013951556")
+        self.assertEqual(target["sold_price_usd"], 80.97)
+        self.assertEqual(target["sold_at"], "2026-08-12")
+        self.assertTrue(target["is_best_offer"])
+
+    def test_scard_condition_and_seller(self):
+        target = next(L for L in self.listings if L["item_id"] == "128013951556")
+        self.assertEqual(target["seller_condition_claim"], "used")  # Pre-Owned
+        self.assertEqual(target["seller"]["name"], "guyvernoidxcollectingtcg")
+        self.assertEqual(target["seller"]["feedback_count"], 198)
+
+    def test_scard_nm_condition(self):
+        nm = [L for L in self.listings if L["seller_condition_claim"] == "NM"]
+        self.assertTrue(nm, "expected at least one NM listing")
+        self.assertTrue(any("Pokémon TCG" in L["title"] for L in nm))
+
+    def test_scard_thumbnail_photo(self):
+        with_photo = [L for L in self.listings if L["photo_urls"]]
+        self.assertTrue(with_photo)
+        self.assertTrue(with_photo[0]["photo_urls"][0].startswith(
+            "https://i.ebayimg.com"))
+
+    def test_scard_apply_rules_keeps_usable(self):
+        self.assertGreaterEqual(len(self.final), 1)
+
+
+class TestSCardBlockDetection(unittest.TestCase):
+    """is_blocked must NOT false-positive on real rendered SRP pages (the
+    current page embeds `.ifh-captcha` CSS + a recaptcha iframe)."""
+
+    def test_real_scard_page_not_blocked(self):
+        # Full 2.2MB rendered charmander SRP page captured live via CDP.
+        html = _load("live/charmander_sold_search.html")
+        self.assertFalse(is_blocked(html))
+        listings = searchSoldListings(html, IDENT)
+        self.assertGreaterEqual(len(listings), 40)
+
+    def test_real_detail_page_not_blocked(self):
+        html = _load("live/charmander_detail.html")
+        self.assertFalse(is_blocked(html))
+
+
+class TestSCardDetailParse(unittest.TestCase):
+    """fetchListingDetail against the current live detail DOM."""
+
+    def setUp(self):
+        self.html = _load("live/charmander_detail.html")
+        self.d = fetchListingDetail(
+            self.html, "https://www.ebay.com/itm/128013951556",
+            content_kind="html")
+
+    def test_price_prefers_usd_approx(self):
+        # UK listing shows GBP 60.00 primary + "approximately US $80.97".
+        self.assertEqual(self.d["sold_price_usd"], 80.97)
+        self.assertTrue(self.d["is_best_offer"])
+
+    def test_title_and_sold_date(self):
+        self.assertIn("Charmander 044", self.d["title"])
+        self.assertEqual(self.d["sold_at"], "2026-08-12")
+
+    def test_seller_name_from_seller_card(self):
+        self.assertEqual(self.d["seller"]["name"],
+                         "guyvernoidxcollectingtcg")
+        self.assertEqual(self.d["seller"]["feedback_count"], 198)
+
+    def test_photos_extracted(self):
+        self.assertGreaterEqual(len(self.d["photo_urls"]), 3)
+        self.assertTrue(self.d["photo_urls"][0].startswith("https://i.ebayimg.com"))
+
+
 if __name__ == "__main__":
     unittest.main()
