@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import WeeklyHunt from "@/components/WeeklyHunt";
 import ValuationRequestButton from "@/components/valuation/ValuationRequestButton";
 import ValuationResultCard from "@/components/valuation/ValuationResultCard";
-import CardScanModal from "@/components/valuation/CardScanModal";
+import CardScanner from "@/components/hunter/CardScanner";
 import { supabase } from "@/lib/supabaseClient";
 import { queueValuation, type QueueOutcome } from "@/lib/valuation-ui";
 import type { CardPriceResult, CardIdentity, CardRarity, CardCondition, CardEdition, GradeLevel } from "@/lib/models";
@@ -77,7 +77,7 @@ function SearchTab() {
   const [loadingPrice, setLoadingPrice] = useState(false);
   const [error, setError] = useState("");
   const [valuationRequestId, setValuationRequestId] = useState<number | null>(null);
-  const [scanOpen, setScanOpen] = useState(false);
+  const [scannedFile, setScannedFile] = useState<File | null>(null);
   const [scannedUrl, setScannedUrl] = useState<string | null>(null);
 
   const RARITIES: CardRarity[] = [
@@ -188,6 +188,24 @@ function SearchTab() {
     if (o.kind !== "error") setValuationRequestId(o.requestId);
   }, []);
 
+  // T22.1 — receive a captured image (File) from the scanner. No upload here;
+  // a local object URL drives the preview until the identify step (T22.2).
+  const scannedUrlRef = useRef<string | null>(null);
+  const handleScanned = useCallback((file: File) => {
+    if (scannedUrlRef.current) URL.revokeObjectURL(scannedUrlRef.current);
+    const url = URL.createObjectURL(file);
+    scannedUrlRef.current = url;
+    setScannedFile(file);
+    setScannedUrl(url);
+  }, []);
+
+  const clearScanned = useCallback(() => {
+    if (scannedUrlRef.current) URL.revokeObjectURL(scannedUrlRef.current);
+    scannedUrlRef.current = null;
+    setScannedUrl(null);
+    setScannedFile(null);
+  }, []);
+
   const handleReRun = useCallback(async () => {
     if (!selectedCard) return;
     const outcome = await queueValuation(supabase, {
@@ -215,14 +233,7 @@ function SearchTab() {
               style={{ fontSize: 16, padding: "14px 16px" }}
             />
           </div>
-          <button
-            className="cta"
-            onClick={() => setScanOpen(true)}
-            title="Point your camera at a card (or upload a photo) to identify it"
-            style={{ whiteSpace: "nowrap", width: "auto", padding: "0 16px" }}
-          >
-            📷 Scan card
-          </button>
+          <CardScanner onCapture={handleScanned} />
         </div>
 
         {/* Filter chips */}
@@ -379,7 +390,7 @@ function SearchTab() {
               🃏 Scanned card
             </div>
             <button
-              onClick={() => setScannedUrl(null)}
+              onClick={clearScanned}
               style={{
                 background: "none",
                 border: "none",
@@ -410,7 +421,7 @@ function SearchTab() {
               marginTop: 6,
             }}
           >
-            {scannedUrl}
+            {scannedFile ? `${scannedFile.name} · ${Math.round(scannedFile.size / 1024)} KB` : "Captured image"}
           </div>
           <div style={{ fontSize: 12, color: "var(--sage)", marginTop: 6 }}>
             Ready for vision identification (next step).
@@ -858,16 +869,6 @@ function SearchTab() {
         </div>
       )}
 
-      {/* Scan card capture modal (T19) */}
-      {scanOpen && (
-        <CardScanModal
-          onClose={() => setScanOpen(false)}
-          onCaptured={(url) => {
-            setScanOpen(false);
-            setScannedUrl(url);
-          }}
-        />
-      )}
     </>
   );
 }

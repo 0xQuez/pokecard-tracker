@@ -1,5 +1,5 @@
-// Integration test for the T19 "Scan card" wiring in the HunterTool SearchTab.
-// Verifies the button opens the capture modal and the captured image URL is
+// Integration test for the T22.1 "Scan card" wiring in the HunterTool SearchTab.
+// Verifies the button opens the capture component and the captured image File is
 // handed back and displayed. Runs under vitest (jsdom).
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
@@ -37,41 +37,40 @@ afterEach(() => {
 });
 
 describe("HunterTool SearchTab scan wiring", () => {
-  it("opens the capture modal from the Scan card button", async () => {
+  it("opens the capture panel from the Scan card button", async () => {
     render(<HunterTool />);
     fireEvent.click(screen.getByRole("button", { name: /scan card/i }));
-    expect(screen.getByTestId("card-scan-modal")).toBeTruthy();
-    // Upload-only fallback in jsdom (no camera).
-    await waitFor(() => expect(screen.getByTestId("scan-file-input")).toBeTruthy());
+    // jsdom has no camera → upload-only fallback.
+    await waitFor(() => expect(screen.getByTestId("card-scanner-panel")).toBeTruthy());
+    expect(screen.getByTestId("card-scanner-file-input")).toBeTruthy();
   });
 
-  it("displays the captured image URL returned by the modal", async () => {
+  it("displays the captured image File returned by the scanner", async () => {
     render(<HunterTool />);
     fireEvent.click(screen.getByRole("button", { name: /scan card/i }));
-    await waitFor(() => expect(screen.getByTestId("scan-file-input")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("card-scanner-file-input")).toBeTruthy());
 
-    fireEvent.change(screen.getByTestId("scan-file-input"), {
+    fireEvent.change(screen.getByTestId("card-scanner-file-input"), {
       target: { files: [makeFile()] },
     });
+    await waitFor(() => expect(screen.getByTestId("card-scanner-use")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("card-scanner-use"));
 
-    await waitFor(() => expect(screen.getByTestId("scan-use-card")).toBeTruthy());
-    fireEvent.click(screen.getByTestId("scan-use-card"));
-
-    // Modal closes, captured card is shown in the search view.
+    // Panel closes, captured card is shown in the search view (local object URL).
     await waitFor(() => expect(screen.getByTestId("scanned-card")).toBeTruthy());
-    expect(screen.queryByTestId("card-scan-modal")).toBeNull();
-    expect(screen.getByTestId("scanned-card").textContent).toMatch(/\/card-images\//);
+    expect(screen.queryByTestId("card-scanner-panel")).toBeNull();
+    expect(screen.getByTestId("scanned-card").textContent).toMatch(/card\.jpg/);
   });
 
   it("lets the user clear the scanned card", async () => {
     render(<HunterTool />);
     fireEvent.click(screen.getByRole("button", { name: /scan card/i }));
-    await waitFor(() => expect(screen.getByTestId("scan-file-input")).toBeTruthy());
-    fireEvent.change(screen.getByTestId("scan-file-input"), {
+    await waitFor(() => expect(screen.getByTestId("card-scanner-file-input")).toBeTruthy());
+    fireEvent.change(screen.getByTestId("card-scanner-file-input"), {
       target: { files: [makeFile()] },
     });
-    await waitFor(() => expect(screen.getByTestId("scan-use-card")).toBeTruthy());
-    fireEvent.click(screen.getByTestId("scan-use-card"));
+    await waitFor(() => expect(screen.getByTestId("card-scanner-use")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("card-scanner-use"));
     await waitFor(() => expect(screen.getByTestId("scanned-card")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: /clear/i }));
