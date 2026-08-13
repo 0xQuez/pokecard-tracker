@@ -110,3 +110,10 @@ worker processes can poll concurrently without double-claiming or blocking
 each other. If a worker crashes after claiming, the request stays `claimed`
 forever — a future enhancement is a reaper that flips stale `claimed`/`running`
 rows back to `pending` after a timeout.
+
+## Artwork embeddings (005)
+
+Migration `005_card_embeddings.sql` is unrelated to the valuation queue — it
+creates the pgvector table (`card_embeddings`) backing image-based card
+matching in the camera scan flow. See `scripts/README.md` for the backfill
+pipeline that populates it. Same idempotent-apply convention as the others.
