@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import WeeklyHunt from "@/components/WeeklyHunt";
 import ValuationRequestButton from "@/components/valuation/ValuationRequestButton";
 import ValuationResultCard from "@/components/valuation/ValuationResultCard";
+import CardScanModal from "@/components/valuation/CardScanModal";
 import { supabase } from "@/lib/supabaseClient";
 import { queueValuation, type QueueOutcome } from "@/lib/valuation-ui";
 import type { CardPriceResult, CardIdentity, CardRarity, CardCondition, CardEdition, GradeLevel } from "@/lib/models";
@@ -76,6 +77,8 @@ function SearchTab() {
   const [loadingPrice, setLoadingPrice] = useState(false);
   const [error, setError] = useState("");
   const [valuationRequestId, setValuationRequestId] = useState<number | null>(null);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scannedUrl, setScannedUrl] = useState<string | null>(null);
 
   const RARITIES: CardRarity[] = [
     "common",
@@ -200,16 +203,26 @@ function SearchTab() {
   return (
     <>
       <div style={{ marginTop: 16 }}>
-        <div className="field">
-          <input
-            className="text-input"
-            type="text"
-            placeholder='e.g. "charizard 4/102"'
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            style={{ fontSize: 16, padding: "14px 16px" }}
-          />
+        <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+          <div className="field" style={{ flex: 1 }}>
+            <input
+              className="text-input"
+              type="text"
+              placeholder='e.g. "charizard 4/102"'
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              style={{ fontSize: 16, padding: "14px 16px" }}
+            />
+          </div>
+          <button
+            className="cta"
+            onClick={() => setScanOpen(true)}
+            title="Point your camera at a card (or upload a photo) to identify it"
+            style={{ whiteSpace: "nowrap", width: "auto", padding: "0 16px" }}
+          >
+            📷 Scan card
+          </button>
         </div>
 
         {/* Filter chips */}
@@ -346,6 +359,64 @@ function SearchTab() {
           {searching ? "Searching…" : "Hunt"}
         </button>
       </div>
+
+      {/* Scanned card (T19) — captured image handed back from the modal */}
+      {scannedUrl && (
+        <div
+          className="card"
+          style={{ marginTop: 12, padding: 12, border: "1px solid var(--sage)" }}
+          data-testid="scanned-card"
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 8,
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
+              🃏 Scanned card
+            </div>
+            <button
+              onClick={() => setScannedUrl(null)}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--text-mid)",
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              Clear
+            </button>
+          </div>
+          <img
+            src={scannedUrl}
+            alt="Scanned card"
+            style={{
+              width: "100%",
+              maxWidth: 240,
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              display: "block",
+            }}
+          />
+          <div
+            style={{
+              fontSize: 11,
+              color: "var(--text-mid)",
+              wordBreak: "break-all",
+              marginTop: 6,
+            }}
+          >
+            {scannedUrl}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--sage)", marginTop: 6 }}>
+            Ready for vision identification (next step).
+          </div>
+        </div>
+      )}
 
       {error && (
         <div
@@ -785,6 +856,17 @@ function SearchTab() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Scan card capture modal (T19) */}
+      {scanOpen && (
+        <CardScanModal
+          onClose={() => setScanOpen(false)}
+          onCaptured={(url) => {
+            setScanOpen(false);
+            setScannedUrl(url);
+          }}
+        />
       )}
     </>
   );
