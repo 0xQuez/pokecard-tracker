@@ -5,8 +5,16 @@ import WeeklyHunt from "@/components/WeeklyHunt";
 import ValuationRequestButton from "@/components/valuation/ValuationRequestButton";
 import ValuationResultCard from "@/components/valuation/ValuationResultCard";
 import CardScanner from "@/components/hunter/CardScanner";
+import CandidatePicker from "@/components/valuation/CandidatePicker";
 import { supabase } from "@/lib/supabaseClient";
 import { queueValuation, type QueueOutcome } from "@/lib/valuation-ui";
+import { uploadCardImageToBucket } from "@/lib/card-image-upload";
+import {
+  identifyCard,
+  resolveIdentity,
+  buildQueueParams,
+  type IdentifyCandidate,
+} from "@/lib/scan-flow";
 import type { CardPriceResult, CardIdentity, CardRarity, CardCondition, CardEdition, GradeLevel } from "@/lib/models";
 
 export default function HunterTool() {
@@ -79,6 +87,24 @@ function SearchTab() {
   const [valuationRequestId, setValuationRequestId] = useState<number | null>(null);
   const [scannedFile, setScannedFile] = useState<File | null>(null);
   const [scannedUrl, setScannedUrl] = useState<string | null>(null);
+
+  // ── Scan flow state machine (T22.7 glue) ──────────────────────────────────
+  // idle → uploading → identifying → confirming → queuing → done (or error)
+  type ScanStep =
+    | "idle"
+    | "uploading"
+    | "identifying"
+    | "confirming"
+    | "queuing"
+    | "done"
+    | "error";
+  const [scanStep, setScanStep] = useState<ScanStep>("idle");
+  const [scanCandidates, setScanCandidates] = useState<IdentifyCandidate[]>([]);
+  const [scanError, setScanError] = useState("");
+  const [scanResultId, setScanResultId] = useState<number | null>(null);
+  // Manual-entry fallback fields (no-match path).
+  const [manualName, setManualName] = useState("");
+  const [manualNumber, setManualNumber] = useState("");
 
   const RARITIES: CardRarity[] = [
     "common",
@@ -197,6 +223,13 @@ function SearchTab() {
     scannedUrlRef.current = url;
     setScannedFile(file);
     setScannedUrl(url);
+    // New capture → reset the downstream scan flow.
+    setScanStep("idle");
+    setScanCandidates([]);
+    setScanError("");
+    setScanResultId(null);
+    setManualName("");
+    setManualNumber("");
   }, []);
 
   const clearScanned = useCallback(() => {
@@ -204,6 +237,107 @@ function SearchTab() {
     scannedUrlRef.current = null;
     setScannedUrl(null);
     setScannedFile(null);
+    setScanStep("idle");
+    setScanCandidates([]);
+    setScanError("");
+    setScanResultId(null);
+    setManualName("");
+    setManualNumber("");
+  }, []);
+
+  // ── Scan flow (T22.7 glue) ─────────────────────────────────────────────────
+  // Upload (T22.2) → identify (T22.5) → resolve (auto or confirm via T22.6)
+  // → queue valuation (T18.8) → ValuationResultCard.
+
+  // Confirm a chosen identity and queue its valuation (T18.8).
+  const confirmIdentity = useCallback(async (identity: IdentifyCandidate) => {
+    setScanError("");
+    setScanCandidates([]);
+    setScanStep("queuing");
+    const outcome = await queueValuation(supabase, buildQueueParams(identity));
+    if (outcome.kind === "error") {
+      setScanError(outcome.message);
+      setScanStep("error");
+      return;
+    }
+    setScanResultId(outcome.requestId);
+    setScanStep("done");
+  }, []);
+
+  const runScan = useCallback(async () => {
+    if (!scannedFile) return;
+    setScanError("");
+    setScanResultId(null);
+    setScanCandidates([]);
+    setManualName("");
+    setManualNumber("");
+
+    // 1. Upload the captured image to the card-images bucket (T22.2).
+    setScanStep("uploading");
+    const up = await uploadCardImageToBucket(scannedFile, {
+      fileName: scannedFile.name,
+    });
+    if (!up.ok) {
+      setScanError(up.error.message);
+      setScanStep("error");
+      return;
+    }
+
+    // 2. Identify via POST /api/hunter/identify (T22.5).
+    setScanStep("identifying");
+    const id = await identifyCard(up.publicUrl);
+    if (!id.ok) {
+      setScanError(id.error);
+      setScanStep("error");
+      return;
+    }
+
+    // 3. Decide: auto-confirm the single match, or ask the user to pick.
+    const outcome = resolveIdentity(id.data);
+    if (outcome.mode === "auto") {
+      await confirmIdentity(outcome.identity);
+      return;
+    }
+    if (outcome.candidates.length === 0) {
+      // No matches — offer manual entry fallback (routes to queueValuation).
+      setScanError(
+        "No card matched what was read from this image. You can enter the card details manually below."
+      );
+      setScanStep("error");
+      return;
+    }
+    setScanCandidates(outcome.candidates);
+    setScanStep("confirming");
+  }, [scannedFile, confirmIdentity]);
+
+  // Manual-entry fallback: route a typed name/number to the valuation queue.
+  const confirmManualEntry = useCallback(async () => {
+    const name = manualName.trim();
+    const number = manualNumber.trim();
+    if (!name) {
+      setScanError("Enter at least the card name to value it.");
+      setScanStep("error");
+      return;
+    }
+    await confirmIdentity({
+      name,
+      set: null,
+      number: number || null,
+      variant: null,
+      price: null,
+      imageUrl: null,
+      confidence: "low",
+    });
+  }, [manualName, manualNumber, confirmIdentity]);
+
+  const retryScan = useCallback(() => {
+    void runScan();
+  }, [runScan]);
+
+  const cancelScanConfirm = useCallback(() => {
+    setScanCandidates([]);
+    setScanError("");
+    setScanStep("idle");
   }, []);
 
   const handleReRun = useCallback(async () => {
@@ -423,9 +557,125 @@ function SearchTab() {
           >
             {scannedFile ? `${scannedFile.name} · ${Math.round(scannedFile.size / 1024)} KB` : "Captured image"}
           </div>
-          <div style={{ fontSize: 12, color: "var(--sage)", marginTop: 6 }}>
-            Ready for vision identification (next step).
+
+          {/* Identify CTA (T22.7) — starts the upload → identify → queue flow */}
+          {scanStep === "idle" && (
+            <button
+              className="cta"
+              onClick={() => void runScan()}
+              data-testid="scan-identify"
+              style={{ width: "100%", marginTop: 10 }}
+            >
+              Identify this card →
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Scan flow loading states (T22.7) */}
+      {(scanStep === "uploading" || scanStep === "identifying") && (
+        <div className="card" style={{ textAlign: "center", padding: 20 }} data-testid="scan-loading">
+          <p style={{ color: "var(--text-mid)" }}>
+            {scanStep === "uploading" ? "Uploading image…" : "Identifying card…"}
+          </p>
+        </div>
+      )}
+
+      {scanStep === "queuing" && (
+        <div className="card" style={{ textAlign: "center", padding: 20 }} data-testid="scan-queuing">
+          <p style={{ color: "var(--text-mid)" }}>Queuing valuation…</p>
+        </div>
+      )}
+
+      {/* Confirmation picker (T22.6) — the user must choose before anything queues */}
+      {scanStep === "confirming" && (
+        <div className="card" style={{ marginTop: 12, padding: 14 }} data-testid="scan-confirm">
+          <CandidatePicker
+            candidates={scanCandidates}
+            onSelect={(c) => void confirmIdentity(c)}
+            onCancel={cancelScanConfirm}
+            title="Which card is this?"
+            note="The scanner found a few possible prints — prices vary a lot between them."
+          />
+        </div>
+      )}
+
+      {/* Error + retry (T22.7) — never a dead end */}
+      {scanStep === "error" && (
+        <div
+          className="card"
+          style={{ marginTop: 12, padding: 16, border: "1px solid var(--clay)" }}
+          data-testid="scan-error"
+        >
+          <div style={{ color: "var(--clay)", fontSize: 13, marginBottom: 12 }}>
+            {scanError}
           </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="cta"
+              onClick={retryScan}
+              data-testid="scan-retry"
+              style={{ flex: 1 }}
+            >
+              Try again
+            </button>
+            <button
+              onClick={clearScanned}
+              style={{
+                flex: 1,
+                padding: "10px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "transparent",
+                cursor: "pointer",
+                color: "var(--text-mid)",
+              }}
+            >
+              Start over
+            </button>
+          </div>
+
+          {/* Manual-entry fallback for the no-match path */}
+          <div style={{ marginTop: 14, borderTop: "1px dashed var(--border)", paddingTop: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)", marginBottom: 8 }}>
+              Or enter the card manually
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <input
+                className="text-input"
+                type="text"
+                placeholder="Card name (e.g. Charizard)"
+                value={manualName}
+                onChange={(e) => setManualName(e.target.value)}
+                data-testid="manual-name"
+                style={{ flex: 2, fontSize: 14, padding: "10px 12px" }}
+              />
+              <input
+                className="text-input"
+                type="text"
+                placeholder="Set # (e.g. 151/165)"
+                value={manualNumber}
+                onChange={(e) => setManualNumber(e.target.value)}
+                data-testid="manual-number"
+                style={{ flex: 1, fontSize: 14, padding: "10px 12px" }}
+              />
+            </div>
+            <button
+              className="cta"
+              onClick={() => void confirmManualEntry()}
+              data-testid="manual-submit"
+              style={{ width: "100%" }}
+            >
+              Value this card →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Valuation result for the scanned card (T18.8) */}
+      {scanStep === "done" && scanResultId && (
+        <div style={{ marginTop: 12 }}>
+          <ValuationResultCard valuationId={scanResultId} />
         </div>
       )}
 
