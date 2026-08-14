@@ -282,15 +282,34 @@ async function main() {
   const failed = results.filter((r) => !r.ok || !r.value).length;
   console.log(`[embed-cards] ${rows.length} embedded, ${failed} failed`);
 
-  // Upsert in batches (idempotent via ON CONFLICT).
+  // Upsert in batches (idempotent via ON CONFLICT). Retry transient network failures
+  // (undici "fetch failed", 5xx) with backoff instead of aborting the whole run — the
+  // flush of ~20k rows takes minutes and one dropped connection shouldn't kill it.
   for (let i = 0; i < rows.length; i += FLUSH_BATCH) {
     const batch = rows.slice(i, i + FLUSH_BATCH);
-    const { error } = await supabase
-      .from("card_embeddings")
-      .upsert(batch, { onConflict: "card_id" });
-    if (error) {
-      console.error(`[embed-cards] upsert batch ${i / FLUSH_BATCH} failed: ${error.message}`);
-      process.exit(1);
+    let done = false;
+    for (let attempt = 0; attempt <= MAX_RETRIES && !done; attempt++) {
+      try {
+        const { error } = await supabase
+          .from("card_embeddings")
+          .upsert(batch, { onConflict: "card_id" });
+        if (!error) { done = true; break; }
+        // 5xx / transient PostgREST errors are retryable; 4xx are not.
+        const code = Number(error.code);
+        const retryable = !error.code || error.code === "PGRST301" || (code >= 500 && code < 600) || /fetch|network|ECONNRESET|ETIMEDOUT/i.test(error.message ?? "");
+        if (!retryable || attempt === MAX_RETRIES) {
+          console.error(`[embed-cards] upsert batch ${i / FLUSH_BATCH} failed: ${error.message}`);
+          process.exit(1);
+        }
+        console.warn(`[embed-cards] upsert batch ${i / FLUSH_BATCH} attempt ${attempt + 1} failed (${error.message}); retrying...`);
+      } catch (e) {
+        if (attempt === MAX_RETRIES) {
+          console.error(`[embed-cards] upsert batch ${i / FLUSH_BATCH} failed: ${e.message}`);
+          process.exit(1);
+        }
+        console.warn(`[embed-cards] upsert batch ${i / FLUSH_BATCH} attempt ${attempt + 1} threw (${e.message}); retrying...`);
+      }
+      await sleep(Math.pow(2, attempt) * 500 + Math.random() * 250);
     }
     console.log(`[embed-cards] upserted ${Math.min(i + FLUSH_BATCH, rows.length)}/${rows.length}`);
   }
