@@ -33,6 +33,13 @@ export interface IdentifyCandidate {
   imageUrl?: string | null;
   /** Match confidence from the identify API: "high" | "medium" | "low" | …. */
   confidence?: string | null;
+  /**
+   * 0..1 hybrid similarity/match score (T23.3). The display shape used to drop
+   * it (only the label survived), but the picker (T23.4) now renders it as a
+   * percentage + bar so the user sees the ranking at a glance. Derived from
+   * the raw pipeline candidate's numeric `score`.
+   */
+  score?: number | null;
 }
 
 export interface IdentifyResponse {
@@ -110,6 +117,7 @@ export function mapRawCandidate(raw: RawIdentifyCandidate): IdentifyCandidate[] 
     price: null, // the identify API doesn't price candidates — the picker shows "—"
     imageUrl,
     confidence,
+    score: raw?.score ?? null,
   }));
 }
 
@@ -163,7 +171,12 @@ export async function identifyCard(
   }
 }
 
-/** Clamp the candidate list to the top N shown in the confirmation picker. */
+/**
+ * Clamp the candidate list to the top N shown in the confirmation picker.
+ * T23.4: the picker handles progressive disclosure itself (top slice + "show
+ * more"), so callers generally pass the full ranked list straight through.
+ * This helper remains for callers that still want a hard clamp.
+ */
 export function topCandidates(
   candidates: IdentifyCandidate[],
   n = 3
@@ -183,12 +196,16 @@ export type ResolveOutcome =
  *
  *   - needsConfirmation (2+ ties, e.g. regular vs Pokemon Center Exclusive) → pick
  *   - otherwise → auto-resolve to the top candidate
+ *
+ * T23.4: on `pick` the FULL ranked candidate list (up to 20) is handed to the
+ * picker, which renders the top slice + "show more". Progressive disclosure is
+ * a UI concern; the glue no longer pre-clamps to 3.
  */
 export function resolveIdentity(resp: IdentifyResponse): ResolveOutcome {
   const candidates = resp.candidates ?? [];
   if (candidates.length === 0) return { mode: "pick", candidates: [] };
   if (resp.needsConfirmation) {
-    return { mode: "pick", candidates: topCandidates(candidates, 3) };
+    return { mode: "pick", candidates };
   }
   return { mode: "auto", identity: candidates[0] };
 }

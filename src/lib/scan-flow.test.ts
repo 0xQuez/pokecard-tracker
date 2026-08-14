@@ -74,12 +74,13 @@ test("resolveIdentity: auto-resolves a single high-confidence match", () => {
   if (out.mode === "auto") assert.equal(out.identity, REGULAR);
 });
 
-test("resolveIdentity: returns the top 3 candidates when confirmation is needed", () => {
+test("resolveIdentity: returns the full ranked list when confirmation is needed", () => {
   const candidates = [REGULAR, PC_EXCLUSIVE, REGULAR, PC_EXCLUSIVE];
   const out = resolveIdentity(resp({ candidates, needsConfirmation: true }));
   assert.equal(out.mode, "pick");
   if (out.mode === "pick") {
-    assert.equal(out.candidates.length, 3);
+    // T23.4: no pre-clamp — the picker owns progressive disclosure.
+    assert.equal(out.candidates.length, 4);
     assert.equal(out.candidates[0], REGULAR);
     assert.equal(out.candidates[1], PC_EXCLUSIVE);
   }
@@ -123,6 +124,7 @@ test("mapRawCandidate: expands variantHints into one row per print", () => {
   assert.equal(out[0].variant, "regular");
   assert.equal(out[0].imageUrl, "https://img/charmander.jpg"); // imageSmall
   assert.equal(out[0].confidence, "high"); // score 0.93
+  assert.equal(out[0].score, 0.93); // T23.4: numeric score carried to the picker
   assert.equal(out[0].price, null);
   // PC-exclusive print row — same card, distinct print
   assert.equal(out[1].variant, "Pokemon Center Exclusive");
