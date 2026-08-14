@@ -62,19 +62,12 @@ export const EMBEDDING_CACHE_DIR = "src/lib/hunter/models";
 /** PostgREST function created by supabase/migrations/006_match_card_embeddings.sql */
 export const MATCH_RPC = "match_card_embeddings";
 
-// T25.3: onnxruntime-node (a transitive dep of @huggingface/transformers) loads
-// its native binding with a DYNAMIC require — see
-// node_modules/onnxruntime-node/dist/binding.js:
-//   require(`../bin/napi-v6/${process.platform}/${process.arch}/onnxruntime_binding.node`)
-// Vercel's static file tracer cannot follow a template-literal path, so that
-// native binary is omitted from the serverless bundle and the embedding lookup
-// dies at cold start with "libonnxruntime.so.1: cannot open shared object file",
-// forcing the pipeline to fall back to text matching. We vendor the linux/x64
-// .node + .so under src/lib/hunter/models/onnxrt (shipped into the function via
-// outputFileTracingIncludes) and pre-cache the require under the exact key
-// onnxruntime-node will request, so Node returns our bundled binding without
-// dlopening a missing file. Local non-linux dev keeps node_modules' own binding.
-import Module, { createRequire } from "node:module";
+// T25.3: point onnxruntime-node's native binding at the vendored linux/x64 copy
+// that ships with the deployment. This is a SIDE-EFFECT import: onnxrt-redirect.ts
+// sets ONNXRUNTIME_BINDING_PATH at module load (a helper call was tree-shaken by
+// Turbopack, and setting the env var must happen before the dynamic import of
+// @huggingface/transformers in getClip, which is what pulls in onnxruntime-node).
+import "./onnxrt-redirect.ts";
 
 // ── Public output shape (T23.2 deliverable 4) ──────────────────────────────
 
@@ -115,10 +108,8 @@ async function getClip(): Promise<ClipModel> {
   clipPromise ??= (async () => {
     const [{ default: path }] = await Promise.all([import("node:path")]);
 
-    // T25.3: point onnxruntime-node at the vendored linux/x64 binding BEFORE
-    // importing @huggingface/transformers, so its dist/binding.js dynamic
-    // require() resolves to a file that actually ships in the function bundle.
-    redirectOnnxRuntimeBinding(path);
+    // (The onnxruntime binding redirect is a side-effect import above; the
+    // Module._load hook is already installed when this module loaded.)
 
     // Dynamic import so offline unit tests of nearestCards never pull in the
     // ONNX runtime / sharp native deps. next.config.ts also marks the package
@@ -154,53 +145,6 @@ async function getClip(): Promise<ClipModel> {
     return { processor, model };
   })();
   return clipPromise;
-}
-
-/**
- * T25.3: Redirect onnxruntime-node's dynamically-required native binding to the
- * vendored copy that ships with the function bundle (see the node:module import
- * comment above for the full rationale). onnxruntime-node's dist/binding.js
- * does `require(\`../bin/napi-v6/${platform}/${arch}/onnxruntime_binding.node\`)`,
- * a template-literal path Vercel's static tracer cannot follow, so the native
- * binary is absent from the function bundle and cold start would throw
- * "libonnxruntime.so.1: cannot open shared object file" (falling back to text
- * match). We patch Module._load to hand that one request the dlopened bundled
- * binding; everything else passes through untouched. Install once per process.
- * No-op outside linux/x64, where local dev resolves the binding from node_modules.
- */
-function redirectOnnxRuntimeBinding(path: typeof import("node:path")): void {
-  console.warn("[onnxrt] redirect check", { platform: process.platform, arch: process.arch });
-  if (process.platform !== "linux" || process.arch !== "x64") return;
-  const req = createRequire(import.meta.url);
-  const bundledPath = path.resolve(
-    process.cwd(),
-    EMBEDDING_CACHE_DIR,
-    "onnxrt/linux-x64",
-    "onnxruntime_binding.node"
-  );
-  console.warn("[onnxrt] bundledPath", bundledPath);
-  // dlopen the bundled binding now (libonnxruntime.so.1 sits beside it, so the
-  // addon's own dlopen resolves the shared library from the same directory):
-  let exports: unknown;
-  try {
-    exports = req(bundledPath);
-    console.warn("[onnxrt] dlopen bundled binding OK");
-  } catch (e) {
-    console.error("[onnxrt] dlopen bundled binding FAILED", (e as Error).message);
-    throw e;
-  }
-  // Module._load isn't in @types/node's surface; cast to a minimal shape.
-  const moduleLoader = Module as unknown as {
-    _load: (request: unknown, parent: unknown, isMain: unknown) => unknown;
-  };
-  const origLoad = moduleLoader._load;
-  moduleLoader._load = function (request: unknown, parent: unknown, isMain: unknown): unknown {
-    if (typeof request === "string" && request.includes("onnxruntime_binding.node")) {
-      return exports;
-    }
-    return origLoad.call(this, request, parent, isMain);
-  };
-  console.warn("[onnxrt] Module._load hook installed");
 }
 
 /** Load bytes -> RawImage via the same path the backfill used. */

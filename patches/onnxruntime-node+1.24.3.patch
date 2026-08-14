@@ -1,0 +1,13 @@
+diff --git a/node_modules/onnxruntime-node/dist/binding.js b/node_modules/onnxruntime-node/dist/binding.js
+index 0c6db2e..8305c85 100644
+--- a/node_modules/onnxruntime-node/dist/binding.js
++++ b/node_modules/onnxruntime-node/dist/binding.js
+@@ -7,7 +7,7 @@ const onnxruntime_common_1 = require("onnxruntime-common");
+ // export native binding
+ exports.binding = 
+ // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+-require(`../bin/napi-v6/${process.platform}/${process.arch}/onnxruntime_binding.node`);
++require(process.env.ONNXRUNTIME_BINDING_PATH || `../bin/napi-v6/${process.platform}/${process.arch}/onnxruntime_binding.node`);
+ let ortInitialized = false;
+ const initOrt = () => {
+     if (!ortInitialized) {
