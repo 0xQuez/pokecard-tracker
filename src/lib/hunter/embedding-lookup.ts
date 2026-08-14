@@ -44,7 +44,21 @@
 
 // ── Model constants (must stay in sync with the backfill) ──────────────────
 export const EMBEDDING_MODEL = "Xenova/clip-vit-base-patch32";
+/** Onnx dtype for the vision model. `q8` selects the `_quantized` ONNX file,
+ *  the int8 variant we vendor into the repo so Vercel ships it with the
+ *  deploy instead of downloading 335MB fp32 at cold start (T25.1). The
+ *  backfill (T25.2) MUST use the same model + dtype + cache dir so query and
+ *  stored vectors stay in the same feature space. */
+export const EMBEDDING_DTYPE = "q8";
 export const EMBEDDING_DIM = 512;
+/**
+ * Repo-local transformers.js cache. We point transformers.js here so the
+ * quantized weights ship with the deployment (committed to git) instead of
+ * living in node_modules/.cache (which Vercel wipes on reinstall) or being
+ * downloaded from the HF Hub at cold start. The layout mirrors the HF cache
+ * key scheme: <cacheDir>/Xenova/clip-vit-base-patch32/<subfolder>/<file>.
+ */
+export const EMBEDDING_CACHE_DIR = "src/lib/hunter/models";
 /** PostgREST function created by supabase/migrations/006_match_card_embeddings.sql */
 export const MATCH_RPC = "match_card_embeddings";
 
@@ -88,12 +102,32 @@ async function getClip(): Promise<ClipModel> {
     // Dynamic import so offline unit tests of nearestCards never pull in the
     // ONNX runtime / sharp native deps. next.config.ts also marks the package
     // as serverExternal so the build doesn't webpack-bundle them.
-    const { CLIPVisionModelWithProjection, AutoProcessor } = await import(
-      "@huggingface/transformers"
-    );
+    const [{ CLIPVisionModelWithProjection, AutoProcessor, env }, { default: path }] =
+      await Promise.all([
+        import("@huggingface/transformers"),
+        // Resolve the vendored model dir against the serverless function root
+        // (process.cwd()). In production on Vercel, outputFileTracingIncludes
+        // (next.config.ts) ships src/lib/hunter/models/ inside the function
+        // bundle and process.cwd() points at that root, so this finds the
+        // quantized weights with no HF Hub download.
+        import("node:path"),
+      ]);
+
+    // Point transformers.js at the repo-local cache and forbid remote fetches:
+    // the vendored quantized model is committed to git, so cold starts load it
+    // straight off disk. allowRemoteModels=false turns a missing/truncated file
+    // into a loud error instead of a silent 335MB download at scan time.
+    env.allowRemoteModels = false;
+    env.useBrowserCache = false;
+    env.useFSCache = true;
+    env.cacheDir = path.join(process.cwd(), EMBEDDING_CACHE_DIR);
+
     const [processor, model] = await Promise.all([
-      AutoProcessor.from_pretrained(EMBEDDING_MODEL),
-      CLIPVisionModelWithProjection.from_pretrained(EMBEDDING_MODEL),
+      AutoProcessor.from_pretrained(EMBEDDING_MODEL, { local_files_only: true }),
+      CLIPVisionModelWithProjection.from_pretrained(EMBEDDING_MODEL, {
+        dtype: EMBEDDING_DTYPE,
+        local_files_only: true,
+      }),
     ]);
     return { processor, model };
   })();

@@ -13,6 +13,16 @@ const nextConfig: NextConfig = {
     "onnxruntime-web",
     "sharp",
   ],
+  // T25.1: Ship the vendored quantized CLIP weights with the deployment. The
+  // embedding lookup (src/lib/hunter/embedding-lookup.ts) loads them from
+  // src/lib/hunter/models/ via transformers.js env.cacheDir; without this
+  // trace include, Vercel would omit the 89MB ONNX file from the serverless
+  // function bundle and the cold start would fall back to (or fail on) a
+  // HuggingFace Hub download. outputFileTracingIncludes copies the whole
+  // model dir into the function's filesystem, where process.cwd() resolves it.
+  outputFileTracingIncludes: {
+    "/api/hunter/identify": ["./src/lib/hunter/models/**/*"],
+  },
 };
 
 export default nextConfig;
