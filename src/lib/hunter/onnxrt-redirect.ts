@@ -40,8 +40,6 @@ const bundledPath = nodePath.resolve(process.cwd(), VENDORED_BINDING_DIR, BINDIN
 if (process.platform === "linux" && existsSync(bundledPath)) {
   // The vendored linux/x64 binding is present in this function bundle — use it.
   process.env.ONNXRUNTIME_BINDING_PATH = bundledPath;
-  console.warn("[onnxrt] vendored binding present; redirecting onnxruntime-node:", bundledPath);
-} else {
-  // Local dev / non-linux: fall through to node_modules' own platform binding.
-  console.warn("[onnxrt] not linux or no vendored binding at", bundledPath, "; using node_modules");
 }
+// Else: local dev / non-linux — leave the env var unset so binding.js falls back
+// to node_modules' own platform binding.
