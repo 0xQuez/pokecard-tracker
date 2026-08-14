@@ -1,32 +1,43 @@
 #!/usr/bin/env node
-// Card artwork embedding backfill (T23.1).
+// Card artwork embedding backfill (T23.1, T25.2).
 //
-// One-time batch pipeline that builds the artwork-embedding knowledge base for every
-// ~19k Pokemon card. For each card it downloads the canonical art, computes a CLIP image
-// embedding locally (no per-image API cost), and upserts it into Supabase pgvector
+// Batch pipeline that builds the artwork-embedding knowledge base for every ~20k Pokemon
+// card. For each card it downloads the canonical art, computes a CLIP image embedding
+// locally (no per-image API cost), and upserts it into Supabase pgvector
 // (`card_embeddings`, see supabase/migrations/005_card_embeddings.sql). This powers the
 // scan-time artwork matcher that replaces text-only matching.
 //
-// EMBEDDING MODEL CHOICE
+// EMBEDDING MODEL CHOICE (T25.1/T25.2)
 //   Xenova/clip-vit-base-patch32 via @huggingface/transformers (ONNX runtime, runs fully
-//   locally on CPU — no external embedding API, so 19k images cost nothing). We use
-//   CLIPVisionModelWithProjection, whose `image_embeds` is a 512-dim L2-normalized vector
-//   (the table column is `vector(512)`). The model + processor weights are cached under
-//   ~/.cache/huggingface (or node_modules/.cache/huggingface) after the first run. If you
-//   swap models, update the column type in the migration and DIM below together.
+//   locally on CPU). We use CLIPVisionModelWithProjection, whose `image_embeds` is a 512-dim
+//   L2-normalized vector (the table column is `vector(512)`). To keep query-time and stored
+//   vectors in the SAME feature space, this script loads the INT8-quantized variant
+//   (dtype "q8" -> vision_model_quantized.onnx) from the repo-local cache dir
+//   src/lib/hunter/models with remote downloads forbidden — the EXACT same config as
+//   src/lib/hunter/embedding-lookup.ts (T25.1). The quantized weights are committed to the
+//   repo, so no HuggingFace Hub download is needed. If you swap models, update the column
+//   type in the migration and DIM below together AND in embedding-lookup.ts.
 //
 // RUN:
-//   node scripts/embed-cards.mjs                 # full ~19k backfill
+//   node scripts/embed-cards.mjs                 # full ~20k backfill (idempotent, skips present)
+//   node scripts/embed-cards.mjs --overwrite     # full backfill, re-embed EVERY card (T25.2)
 //   node scripts/embed-cards.mjs --limit=50      # smoke: the first 50 cards by catalog id
 //
 // The script loads .env.local automatically (SUPABASE_URL + a key). It uses the service
 // role key if SUPABASE_SERVICE_ROLE_KEY is present, else the anon key (the migration grants
 // anon read/write on card_embeddings, matching the repo's no-real-auth model).
 //
-// RESUME / IDEMPOTENCY: card_id is the pokemontcg.io id and the table's primary key. The
-// script first fetches every card_id already present and skips those, so re-running after a
-// crash (or for new sets) continues where it left off and inserts 0 duplicates. Upserts use
-// ON CONFLICT (card_id) DO UPDATE, so an interrupted flush re-runs cleanly.
+// RESUME / IDEMPOTENCY: card_id is the pokemontcg.io id and the table's primary key. By
+// default the script first fetches every card_id already present and skips those, so
+// re-running after a crash (or for new sets) continues where it left off and inserts 0
+// duplicates. Upserts use ON CONFLICT (card_id) DO UPDATE, so an interrupted flush re-runs
+// cleanly.
+//
+// OVERWRITE MODE (--overwrite): forces re-embedding of EVERY card regardless of whether a
+// row already exists, then upserts each new vector over the old one. Used by T25.2 when the
+// stored rows were computed with a different model variant (fp32) than the query-time model
+// (int8) — stale vectors must not survive, and plain skip-if-present resume would keep them.
+// Upsert-on-overwrite keeps the script resumable if interrupted (no destructive DELETE).
 
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -36,6 +47,7 @@ import {
   CLIPVisionModelWithProjection,
   AutoProcessor,
   RawImage,
+  env,
 } from "@huggingface/transformers";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -43,6 +55,12 @@ const REPO_ROOT = join(__dirname, "..");
 
 // ── config ──────────────────────────────────────────────────────────────────
 const MODEL = "Xenova/clip-vit-base-patch32";
+// Onnx dtype: `q8` selects the int8 _quantized ONNX file vendored in the repo
+// (src/lib/hunter/models). MUST match src/lib/hunter/embedding-lookup.ts's
+// EMBEDDING_DTYPE so query-time and stored vectors share one feature space (T25.2).
+const DTYPE = "q8";
+// Repo-local transformers.js cache (same as embedding-lookup.ts's EMBEDDING_CACHE_DIR).
+const CACHE_DIR = "src/lib/hunter/models";
 const DIM = 512; // CLIP ViT-B/32 image embedding dimension — keep in sync with migration 005
 const API_BASE = "https://api.pokemontcg.io/v2";
 const CONCURRENCY = 5; // max parallel downloads/embeds (pokemontcg.io 500s under bursts)
@@ -166,8 +184,18 @@ async function enumerateAllCards() {
 // ── CLIP embedding ─────────────────────────────────────────────────────────
 let processorPromise, modelPromise;
 function getModels() {
-  processorPromise ??= AutoProcessor.from_pretrained(MODEL);
-  modelPromise ??= CLIPVisionModelWithProjection.from_pretrained(MODEL);
+  // Point transformers.js at the repo-local cache and forbid remote fetches — the
+  // quantized weights are committed to src/lib/hunter/models, so no HF Hub download.
+  // Mirrors src/lib/hunter/embedding-lookup.ts's setup exactly (T25.2 consistency).
+  env.allowRemoteModels = false;
+  env.useBrowserCache = false;
+  env.useFSCache = true;
+  env.cacheDir = join(process.cwd(), CACHE_DIR);
+  processorPromise ??= AutoProcessor.from_pretrained(MODEL, { local_files_only: true });
+  modelPromise ??= CLIPVisionModelWithProjection.from_pretrained(MODEL, {
+    dtype: DTYPE,
+    local_files_only: true,
+  });
   return Promise.all([processorPromise, modelPromise]);
 }
 
@@ -221,20 +249,27 @@ async function main() {
   const limitArg = args.find((a) => a.startsWith("--limit="));
   const limit = limitArg ? Number(limitArg.split("=")[1]) : Infinity;
   if (limit <= 0) { console.error("--limit must be a positive integer"); process.exit(2); }
+  const overwrite = args.includes("--overwrite");
   const mode = Number.isFinite(limit) ? `smoke (limit=${limit})` : "full";
+  const flavor = overwrite ? "overwrite (re-embed every card)" : "idempotent (skip present)";
 
-  console.log(`[embed-cards] ${mode} run | model=${MODEL} dim=${DIM} concurrency=${CONCURRENCY}`);
+  console.log(`[embed-cards] ${mode} run | model=${MODEL} dtype=${DTYPE} dim=${DIM} concurrency=${CONCURRENCY} mode=${flavor}`);
   console.log(`[embed-cards] enumerating cards from ${API_BASE} ...`);
-  await getModels(); // load CLIP once up front (weight download on first run)
-  console.log(`[embed-cards] CLIP model loaded`);
+  await getModels(); // load CLIP once up front (local quantized weights)
+  console.log(`[embed-cards] CLIP model loaded (dtype=${DTYPE}, cache=${CACHE_DIR})`);
 
-  // Existing ids for resume.
-  const { data: existingRows, error: existingErr } = await supabase
-    .from("card_embeddings")
-    .select("card_id");
-  if (existingErr) { console.error("Failed to read existing embeddings:", existingErr.message); process.exit(1); }
-  const existingIds = new Set(existingRows.map((r) => r.card_id));
-  console.log(`[embed-cards] ${existingIds.size} card(s) already in DB — skipping those`);
+  // Existing ids for resume — only consulted when NOT in overwrite mode.
+  let existingIds = new Set();
+  if (!overwrite) {
+    const { data: existingRows, error: existingErr } = await supabase
+      .from("card_embeddings")
+      .select("card_id");
+    if (existingErr) { console.error("Failed to read existing embeddings:", existingErr.message); process.exit(1); }
+    existingIds = new Set(existingRows.map((r) => r.card_id));
+    console.log(`[embed-cards] ${existingIds.size} card(s) already in DB — skipping those`);
+  } else {
+    console.log("[embed-cards] overwrite mode — recomputing embeddings for EVERY card");
+  }
 
   const cards = await enumerateAllCards();
   // Apply the limit to the deterministic (id-sorted) catalog, THEN drop already-present
@@ -294,9 +329,16 @@ async function main() {
           .from("card_embeddings")
           .upsert(batch, { onConflict: "card_id" });
         if (!error) { done = true; break; }
-        // 5xx / transient PostgREST errors are retryable; 4xx are not.
+        // Retryable: 5xx, connection resets, PostgREST network errors, and Postgres
+        // statement-timeouts (code 57014) — the latter can fire on the first write
+        // after a long embedding phase where the pooled connection sat idle; a retry
+        // on a fresh statement succeeds. 4xx (real client errors) are not retryable.
         const code = Number(error.code);
-        const retryable = !error.code || error.code === "PGRST301" || (code >= 500 && code < 600) || /fetch|network|ECONNRESET|ETIMEDOUT/i.test(error.message ?? "");
+        const retryable = !error.code
+          || error.code === "PGRST301"
+          || error.code === "57014"
+          || (code >= 500 && code < 600)
+          || /fetch|network|ECONNRESET|ETIMEDOUT|statement timeout|connection/i.test(error.message ?? "");
         if (!retryable || attempt === MAX_RETRIES) {
           console.error(`[embed-cards] upsert batch ${i / FLUSH_BATCH} failed: ${error.message}`);
           process.exit(1);
