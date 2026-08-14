@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 
 import {
   runIdentifyPipeline,
+  runEmbeddingLookup,
+  embeddingToCandidate,
   applyStampTiebreak,
   decideNeedsConfirmation,
   trimCandidates,
@@ -14,11 +16,14 @@ import {
   CONFIRMATION_GAP,
   AMBIGUOUS_CANDIDATE_LIMIT,
   CLEAR_CANDIDATE_LIMIT,
+  EMBEDDING_CANDIDATE_LIMIT,
   type IdentifyCandidate,
   type ExtractedIdentity,
+  type EmbeddingLookupDeps,
 } from "./identify-pipeline.ts";
 import { HttpError } from "./tcg-match.ts";
 import { VisionNotConfigured } from "./vision-identify.ts";
+import type { EmbeddingCandidate } from "./embedding-lookup.ts";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -221,6 +226,136 @@ test("pipeline: vision not configured -> VISION_NOT_CONFIGURED", async () => {
   });
   assert.equal(out.status, "vision-down");
   if (out.status === "vision-down") assert.equal(out.code, "VISION_NOT_CONFIGURED");
+});
+
+// ── embeddingToCandidate / runEmbeddingLookup (T23.2) ───────────────────────
+
+function embCand(partial: Partial<EmbeddingCandidate> = {}): EmbeddingCandidate {
+  return {
+    cardId: "svp-44",
+    name: "Charmander",
+    setId: "svp",
+    setName: "Scarlet & Violet Black Star Promos",
+    number: "44",
+    imageUrl: "https://images.pokemontcg.io/svp/44.png",
+    similarity: 0.9,
+    ...partial,
+  };
+}
+
+test("embeddingToCandidate maps embedding candidate -> IdentifyCandidate", () => {
+  const c = embeddingToCandidate(embCand(), charmanderPlain);
+  assert.equal(c.id, "svp-44");
+  assert.equal(c.name, "Charmander");
+  assert.deepEqual(c.set, { id: "svp", name: "Scarlet & Violet Black Star Promos" });
+  assert.equal(c.number, "44");
+  assert.equal(c.score, 0.9);
+  assert.equal(c.imageSmall, "https://images.pokemontcg.io/svp/44.png");
+  assert.equal(c.imageLarge, "https://images.pokemontcg.io/svp/44.png");
+  // variantHints come from the vision identity (T23.3 needs this).
+  assert.deepEqual(c.variantHints, ["Holo"]); // charmanderPlain is variant holo
+});
+
+test("runEmbeddingLookup returns ranked candidates via injected nearest", async () => {
+  const deps: EmbeddingLookupDeps = {
+    client: {} as never,
+    embed: async () => new Float32Array(512),
+    nearest: async () => [
+      embCand({ similarity: 0.9 }),
+      embCand({ cardId: "svp-45", number: "45", similarity: 0.8 }),
+    ],
+    k: 20,
+  };
+  const out = await runEmbeddingLookup("https://img/x.png", deps, charmanderPlain);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].id, "svp-44");
+  assert.equal(out[0].score, 0.9);
+});
+
+test("runEmbeddingLookup returns [] when embedding throws (fallback)", async () => {
+  const deps: EmbeddingLookupDeps = {
+    client: {} as never,
+    embed: async () => {
+      throw new Error("model failed to load");
+    },
+    nearest: async () => [],
+  };
+  const out = await runEmbeddingLookup("https://img/x.png", deps, charmanderPlain);
+  assert.deepEqual(out, []);
+});
+
+test("runEmbeddingLookup returns [] when no client (table not configured)", async () => {
+  const out = await runEmbeddingLookup("https://img/x.png", {}, charmanderPlain);
+  assert.deepEqual(out, []);
+});
+
+// ── runIdentifyPipeline embedding path ──────────────────────────────────────
+
+test("pipeline (embedding): populated table -> up to 20 candidates, text skipped", async () => {
+  const cands = Array.from({ length: 25 }, (_, i) =>
+    embCand({ cardId: `c${i}`, name: `Card ${i}`, number: String(i), similarity: 1 - i * 0.01 }),
+  );
+  const out = await runIdentifyPipeline("https://img/x.png", {
+    visionFn: visionReturning(charmanderPlain),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => cands,
+    },
+    matchOptions: {
+      // If the text matcher were reached, this would blow up the test.
+      fetchFn: async () => {
+        throw new Error("text matcher must NOT run when embedding path succeeds");
+      },
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(out.candidates.length, EMBEDDING_CANDIDATE_LIMIT);
+  assert.equal(out.candidates[0].id, "c0");
+  assert.equal(out.extracted.name, "Charmander");
+});
+
+test("pipeline (embedding): svp-44 photo returns svp-44 rank 1 by similarity", async () => {
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/svp/44.png", {
+    visionFn: visionReturning(charmanderPlain),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => [
+        embCand({ similarity: 0.94 }),
+        embCand({ cardId: "det1-4", name: "Detective Pikachu's Charmander", setName: "Detective Pikachu", number: "4", similarity: 0.88 }),
+        embCand({ cardId: "base1-46", name: "Charmander", number: "46", similarity: 0.87 }),
+      ],
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(out.candidates[0].id, "svp-44");
+});
+
+test("pipeline (embedding): empty table falls back to text matcher", async () => {
+  let textMatchRan = false;
+  const out = await runIdentifyPipeline("https://img/x.png", {
+    visionFn: visionReturning(charmanderPlain),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => [],
+    },
+    matchOptions: {
+      fetchFn: async () => {
+        textMatchRan = true;
+        return { data: [svp44Raw] };
+      },
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(textMatchRan, true);
+  assert.equal(out.candidates[0].id, "svp-44");
 });
 
 // ── helper (mirrors toCandidate in the pipeline) ─────────────────────────────

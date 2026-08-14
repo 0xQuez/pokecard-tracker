@@ -85,10 +85,37 @@ New sets flow in automatically; nothing to reconfigure.
 - **Per-card failures:** an image that can't be downloaded/embedded is logged as
   FAILED and skipped (doesn't kill the run). Re-running retries it.
 
-## Apply the migration
+## Apply the migrations
 
-The script needs the `card_embeddings` table to exist first. Apply
-`supabase/migrations/005_card_embeddings.sql` in the Supabase Dashboard SQL
-Editor (or `supabase db push`). It's idempotent — safe to re-run. It enables
-the `vector` extension, creates the table with an HNSW `vector_cosine_ops`
-index, enables RLS, and grants the anon role select/insert/update.
+The script needs the `card_embeddings` table to exist first. Apply BOTH
+migrations in the Supabase Dashboard SQL Editor (or `supabase db push`), in
+order:
+
+1. `supabase/migrations/005_card_embeddings.sql` — enables the `vector`
+   extension, creates the `card_embeddings` table with an HNSW
+   `vector_cosine_ops` index, enables RLS, and grants the anon role
+   select/insert/update.
+2. `supabase/migrations/006_match_card_embeddings.sql` — creates the
+   `match_card_embeddings(query_embedding, match_count)` SQL function that the
+   scan-time lookup (T23.2, `src/lib/hunter/embedding-lookup.ts`) calls to find
+   the top-k nearest cards by cosine distance. It returns the same snake_case
+   columns plus `similarity = 1 - cosine_distance` clamped to 0..1. Idempotent
+   (`create or replace`); grants anon EXECUTE.
+
+Both are idempotent — safe to re-run.
+
+## Scan-time lookup (T23.2)
+
+`src/lib/hunter/embedding-lookup.ts` is the runtime half: it embeds the user's
+card photo with the SAME model the backfill used and queries the RPC above for
+the top-20 candidates, ranked by similarity. It runs server-side in the
+`POST /api/hunter/identify` route (nodejs runtime); the model is loaded once per
+process and reused. The identify pipeline uses this as the PRIMARY candidate
+source, falling back to the pokemontcg.io text matcher only when the embeddings
+table is empty/unavailable. Migration 006 is what makes the query work, so it
+must be applied before scans can use embeddings.
+
+`scripts/verify-embedding-lookup.mjs` runs a real end-to-end check against a
+local pgvector + PostgREST stack (real CLIP model + real card art): it asserts
+the canonical image of svp/44 ranks svp-44 first, and that a different card's
+photo does not put svp-44 in the top 3.

@@ -7,6 +7,20 @@ import {
 export const runtime = "nodejs";
 
 /**
+ * Lazily resolve the Supabase client. Unlike importing the shared module at the
+ * top of the file, this never throws at build time when env vars are absent —
+ * the embedding path simply falls back to text matching. (The shared
+ * `supabaseClient` module calls createClient at import, which needs env.)
+ */
+async function getSupabaseClient() {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    return null;
+  }
+  const { supabase } = await import("../../../../lib/supabaseClient");
+  return supabase;
+}
+
+/**
  * POST /api/hunter/identify
  *
  * Body:   { imageUrl: string }
@@ -54,7 +68,18 @@ export async function POST(req: NextRequest) {
 
   let outcome: IdentifyOutcome;
   try {
-    outcome = await runIdentifyPipeline(imageUrl.trim());
+    const supabase = await getSupabaseClient();
+    outcome = await runIdentifyPipeline(imageUrl.trim(), {
+      embedding:
+        supabase == null
+          ? undefined // no Supabase configured -> text-match fallback
+          : {
+              // T23.2: artwork-embedding primary candidate source. The anon role
+              // is granted EXECUTE on match_card_embeddings by migration 006. If
+              // the table is empty/unavailable the pipeline falls back to text.
+              client: supabase,
+            },
+    });
   } catch (e) {
     console.error("identify pipeline failed:", e);
     return NextResponse.json(

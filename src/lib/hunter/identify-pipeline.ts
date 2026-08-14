@@ -36,6 +36,12 @@ import {
   type CandidateCard,
   type MatchOptions,
 } from "./tcg-match.ts";
+import {
+  embedQueryImage,
+  nearestCards,
+  type EmbeddingCandidate,
+  type RpcClient,
+} from "./embedding-lookup.ts";
 
 // ── Response contract (T22.5 documented shape) ──────────────────────────────
 
@@ -110,14 +116,49 @@ export const CONFIRMATION_GAP = 0.15;
 export const AMBIGUOUS_CANDIDATE_LIMIT = 3;
 /** Candidates returned when clearly unambiguous. */
 export const CLEAR_CANDIDATE_LIMIT = 1;
+/** Max embedding-similarity candidates the pipeline returns (T23.2). */
+export const EMBEDDING_CANDIDATE_LIMIT = 20;
 
 // ── Injectable deps ─────────────────────────────────────────────────────────
+
+export interface EmbeddingLookupDeps {
+  /**
+   * PostgREST client for the `match_card_embeddings` RPC. Omit (or the table
+   * being empty/unavailable) and the pipeline silently falls back to the text
+   * matcher — an embedding outage never blocks a scan.
+   */
+  client?: RpcClient;
+  /**
+   * Embed the query photo. Defaults to the real `embedQueryImage` (runs the
+   * CLIP model server-side). Injectable so tests avoid the ONNX runtime.
+   */
+  embed?: (source: string | ArrayBuffer | Uint8Array) => Promise<Float32Array>;
+  /**
+   * Nearest-neighbor query. Defaults to the real `nearestCards`. Injectable so
+   * tests can stub the RPC without a live table.
+   */
+  nearest?: (
+    embedding: ArrayLike<number>,
+    opts: { client?: RpcClient; k?: number },
+  ) => Promise<EmbeddingCandidate[]>;
+  /** set_id -> set name resolver, forwarded to the RPC mapping. */
+  resolveSetName?: (setId: string) => Promise<string>;
+  /** How many embedding candidates to request. Defaults to 20. */
+  k?: number;
+}
 
 export interface IdentifyDeps {
   /** Vision call. Defaults to the configured defaultVisionFn. */
   visionFn?: VisionFn;
   /** Options forwarded to the T22.4 matcher (fetchFn/sleep/retries…). */
   matchOptions?: MatchOptions;
+  /**
+   * T23.2 artwork-embedding path. When supplied and the table is populated it
+   * becomes the PRIMARY candidate source (up to `k` similarity-ranked cards);
+   * the text matcher is used only as a fallback when the table is
+   * empty/unavailable. When omitted, behavior is unchanged (text-only).
+   */
+  embedding?: EmbeddingLookupDeps;
 }
 
 // ── Stamp / variant tiebreaker ───────────────────────────────────────────────
@@ -189,6 +230,62 @@ function toCandidate(card: CandidateCard, identity: CardIdentity): IdentifyCandi
     score: card.score,
     variantHints: buildVariantHints(identity),
   };
+}
+
+/**
+ * Convert an embedding-similarity candidate (T23.2 shape) into the pipeline's
+ * IdentifyCandidate contract so the route/UI keep a single candidate shape. The
+ * similarity score maps directly to `score`; artwork and set come from the
+ * stored row. variantHints are derived from the vision identity exactly as the
+ * text path does (T23.3 needs this for stamp/variant tiebreak).
+ */
+export function embeddingToCandidate(
+  ec: EmbeddingCandidate,
+  identity: CardIdentity,
+): IdentifyCandidate {
+  return {
+    id: ec.cardId,
+    name: ec.name,
+    set: ec.setId || ec.setName
+      ? { id: ec.setId, name: ec.setName }
+      : { id: "", name: "" },
+    number: ec.number,
+    imageSmall: ec.imageUrl,
+    imageLarge: ec.imageUrl,
+    score: ec.similarity,
+    variantHints: buildVariantHints(identity),
+  };
+}
+
+/**
+ * Run the artwork-embedding lookup (T23.2): embed the photo, query pgvector
+ * for nearest neighbors, and return up to `k` candidates ranked by similarity.
+ *
+ * Never throws: any failure (no client, model/image error, RPC error, empty
+ * table) returns [] so the pipeline can fall back to text matching. This keeps
+ * a scan alive when the embedding table isn't populated yet.
+ */
+export async function runEmbeddingLookup(
+  imageUrl: string,
+  deps: EmbeddingLookupDeps,
+  identity: CardIdentity,
+): Promise<IdentifyCandidate[]> {
+  const k = deps.k ?? EMBEDDING_CANDIDATE_LIMIT;
+  if (!deps.client) return [];
+  const embedFn = deps.embed ?? embedQueryImage;
+  const nearestFn = deps.nearest ?? nearestCards;
+  try {
+    const embedding = await embedFn(imageUrl);
+    const neighbors = await nearestFn(embedding, { client: deps.client, k });
+    return neighbors
+      .map((ec) => embeddingToCandidate(ec, identity))
+      .slice(0, k);
+  } catch (e) {
+    console.warn(
+      `[identify-pipeline] embedding lookup failed; falling back to text match: ${(e as Error)?.message}`,
+    );
+    return [];
+  }
 }
 
 /**
@@ -292,7 +389,17 @@ export async function tcgProbeUnhealthy(
 // ── Main entry ───────────────────────────────────────────────────────────────
 
 /**
- * Run the full identify pipeline: imageUrl -> vision -> tcg match -> tiebreak.
+ * Run the full identify pipeline: imageUrl -> vision -> (embedding lookup
+ * PRIMARY | tcg text match fallback) -> tiebreak.
+ *
+ * T23.2 change: when `deps.embedding` is supplied and the card_embeddings table
+ * is populated, the artwork-embedding path is the primary candidate source and
+ * returns up to EMBEDDING_CANDIDATE_LIMIT (20) similarity-ranked candidates.
+ * Vision extraction ALWAYS runs first (T23.3 needs the extracted identity for
+ * variant/stamp tiebreak). The pokemontcg.io text matcher is used only as a
+ * fallback when the embedding table is empty/unavailable (or no embedding deps
+ * are supplied — the pre-T23.2 behavior).
+ *
  * Never throws for expected conditions; returns a discriminated IdentifyOutcome
  * the route maps to HTTP status codes.
  */
@@ -300,7 +407,7 @@ export async function runIdentifyPipeline(
   imageUrl: string,
   deps: IdentifyDeps = {},
 ): Promise<IdentifyOutcome> {
-  // 1. Vision extraction.
+  // 1. Vision extraction (always — T23.3 needs the identity for tiebreak).
   let identity: CardIdentityResult;
   try {
     identity = await extractCardIdentity(imageUrl, deps.visionFn);
@@ -314,7 +421,29 @@ export async function runIdentifyPipeline(
     return { status: "unreadable", code: "UNREADABLE_IMAGE" };
   }
 
-  // 2. TCG matching.
+  // 2. Embedding lookup — primary when the table is populated.
+  if (deps.embedding) {
+    const embeddingCandidates = await runEmbeddingLookup(
+      imageUrl,
+      deps.embedding,
+      identity,
+    );
+    if (embeddingCandidates.length > 0) {
+      const candidates = applyStampTiebreak(embeddingCandidates, identity);
+      const needsConfirmation = decideNeedsConfirmation(candidates, identity);
+      return {
+        status: "ok",
+        // T23.2 keeps the full ranked list (up to 20) for T23.4's UI + T23.3's
+        // hybrid tiebreak to consume; no 1/3 trimming on the embedding path.
+        candidates: candidates.slice(0, EMBEDDING_CANDIDATE_LIMIT),
+        needsConfirmation,
+        extracted: identity,
+      };
+    }
+    // Empty/unavailable table → fall through to the text matcher.
+  }
+
+  // 3. TCG text matching (fallback).
   let cards: CandidateCard[];
   try {
     cards = await matchCard(toMatcherIdentity(identity), deps.matchOptions);
@@ -331,7 +460,7 @@ export async function runIdentifyPipeline(
     throw e; // 4xx other than 429 — unexpected, let route 500 it
   }
 
-  // 3. No match at all. Distinguish "tcg healthy, genuinely no record" from
+  // 4. No match at all. Distinguish "tcg healthy, genuinely no record" from
   //    "tcg down" — matchCard swallows per-query errors, so probe the API.
   if (cards.length === 0) {
     const down = await tcgProbeUnhealthy(deps.matchOptions);
@@ -345,7 +474,7 @@ export async function runIdentifyPipeline(
     return { status: "no-match", code: "NO_MATCH", extracted: identity };
   }
 
-  // 4. Stamp/variant tiebreaker + confirmation decision + trimming.
+  // 5. Stamp/variant tiebreaker + confirmation decision + trimming.
   const candidates = applyStampTiebreak(cards, identity);
   const needsConfirmation = decideNeedsConfirmation(candidates, identity);
   return {
