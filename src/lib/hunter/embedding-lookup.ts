@@ -169,6 +169,7 @@ async function getClip(): Promise<ClipModel> {
  * No-op outside linux/x64, where local dev resolves the binding from node_modules.
  */
 function redirectOnnxRuntimeBinding(path: typeof import("node:path")): void {
+  console.log("[onnxrt] redirect check", { platform: process.platform, arch: process.arch });
   if (process.platform !== "linux" || process.arch !== "x64") return;
   const req = createRequire(import.meta.url);
   const bundledPath = path.resolve(
@@ -177,9 +178,17 @@ function redirectOnnxRuntimeBinding(path: typeof import("node:path")): void {
     "onnxrt/linux-x64",
     "onnxruntime_binding.node"
   );
+  console.log("[onnxrt] bundledPath", bundledPath);
   // dlopen the bundled binding now (libonnxruntime.so.1 sits beside it, so the
   // addon's own dlopen resolves the shared library from the same directory):
-  const exports = req(bundledPath);
+  let exports: unknown;
+  try {
+    exports = req(bundledPath);
+    console.log("[onnxrt] dlopen bundled binding OK");
+  } catch (e) {
+    console.error("[onnxrt] dlopen bundled binding FAILED", (e as Error).message);
+    throw e;
+  }
   // Module._load isn't in @types/node's surface; cast to a minimal shape.
   const moduleLoader = Module as unknown as {
     _load: (request: unknown, parent: unknown, isMain: unknown) => unknown;
@@ -191,6 +200,7 @@ function redirectOnnxRuntimeBinding(path: typeof import("node:path")): void {
     }
     return origLoad.call(this, request, parent, isMain);
   };
+  console.log("[onnxrt] Module._load hook installed");
 }
 
 /** Load bytes -> RawImage via the same path the backfill used. */
