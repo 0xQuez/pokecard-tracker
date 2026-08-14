@@ -22,16 +22,13 @@ const nextConfig: NextConfig = {
   // model dir into the function's filesystem, where process.cwd() resolves it.
   outputFileTracingIncludes: {
     "/api/hunter/identify": [
+      // T25.1: Ship the vendored quantized CLIP weights with the deployment.
+      // Also carries the vendored onnxruntime-node native binding
+      // (src/lib/hunter/models/onnxrt/linux-x64/, T25.3) that embedding-lookup
+      // redirects the dynamic require onto. Both live under src/ so Vercel's
+      // tracer includes them cleanly (no node_modules glob, which would balloon
+      // the function to ~462MB by dragging in the whole onnxruntime packages).
       "./src/lib/hunter/models/**/*",
-      // T25.3: onnxruntime-node loads its native binding with a DYNAMIC require
-      // (`../bin/napi-v6/${platform}/${arch}/onnxruntime_binding.node`, see
-      // dist/binding.js), so Next's static tracer omits it from the serverless
-      // bundle. Without shipping the linux/x64 .node + libonnxruntime.so.1, the
-      // embedding lookup fails at cold start with "libonnxruntime.so.1: cannot
-      // open shared object file" and the pipeline falls back to text matching.
-      // Copying the native bin dir into the function keeps the binding loadable
-      // and the quantized model running fully on-device.
-      "./node_modules/onnxruntime-node/bin/napi-v6/linux/x64/**/*",
     ],
   },
 };
