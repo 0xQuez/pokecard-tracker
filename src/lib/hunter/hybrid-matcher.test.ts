@@ -142,7 +142,34 @@ test("ACCEPTANCE variant: vision sees stamp but NO candidate metadata distinguis
 
 // ── ACCEPTANCE 2: clear-cut distinct art ────────────────────────────────────
 
-test("ACCEPTANCE: clear-cut (distinct art, high top-1) -> no confirmation", () => {
+test("T23.5 regression: PC stamp on a SINGLE clear winner still forces confirmation (catalog keeps regular+PC-exclusive under one id)", () => {
+  // Real-data case: the embedding lookup returns svp-44 as the lone winner
+  // (sim 0.937, nothing else within the same-art window), and vision reads a
+  // Pokemon Center stamp. The catalog keeps the regular and PC-exclusive
+  // prints under ONE card id, so a lone winner must still surface both prints
+  // for the user to pick — they differ ~4x in price.
+  const out = hybridMatch(
+    [cand({ id: "svp-44", name: "Charmander", similarity: 0.94 })],
+    identity({ stamp: "Pokemon Center" }),
+  );
+  assert.equal(out.ranked.length, 1);
+  assert.equal(out.ranked[0].candidate.id, "svp-44");
+  assert.equal(out.needsConfirmation, true);
+  assert.equal(out.reason, SAME_ART_VARIANT_REASON);
+  assert.equal(out.tieDetected, true);
+});
+
+test("T23.5: no pricing stamp on a single winner -> no confirmation", () => {
+  const out = hybridMatch(
+    [cand({ id: "svp-44", name: "Charmander", similarity: 0.94 })],
+    identity({ stamp: null }),
+  );
+  assert.equal(out.needsConfirmation, false);
+  assert.equal(out.reason, null);
+  assert.equal(out.tieDetected, false);
+});
+
+test("T23.5: ACCEPTANCE clear-cut (distinct art, high top-1) -> no confirmation", () => {
   const out = hybridMatch(
     [
       cand({ id: "svp-44", name: "Charmander", similarity: 0.99 }),

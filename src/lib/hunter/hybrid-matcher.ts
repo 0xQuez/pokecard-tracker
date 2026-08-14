@@ -292,5 +292,19 @@ export function hybridMatch(
     }
   }
 
+  // 4. Pricing-stamp rule: a vision-read pricing stamp (Pokemon Center /
+  //    1st Edition / shadowless) is inherently ambiguous even when the
+  //    embedding lookup returns a SINGLE clear winner. The catalog keeps the
+  //    regular vs PC-exclusive prints under ONE card id (svp-44 is both), so a
+  //    lone winner must still surface both prints for the user to pick — they
+  //    can differ ~4x in price. This mirrors decideNeedsConfirmation's
+  //    hasStampConflict rule on the text path (which forces confirmation even
+  //    with a single candidate).
+  if (!needsConfirmation && visionHasStamp(identity) && ranked.length >= 1) {
+    needsConfirmation = true;
+    reason = SAME_ART_VARIANT_REASON;
+    tieDetected = true;
+  }
+
   return { ranked, needsConfirmation, reason, tieDetected };
 }
