@@ -21,7 +21,18 @@ const nextConfig: NextConfig = {
   // HuggingFace Hub download. outputFileTracingIncludes copies the whole
   // model dir into the function's filesystem, where process.cwd() resolves it.
   outputFileTracingIncludes: {
-    "/api/hunter/identify": ["./src/lib/hunter/models/**/*"],
+    "/api/hunter/identify": [
+      "./src/lib/hunter/models/**/*",
+      // T25.3: onnxruntime-node loads its native binding with a DYNAMIC require
+      // (`../bin/napi-v6/${platform}/${arch}/onnxruntime_binding.node`, see
+      // dist/binding.js), so Next's static tracer omits it from the serverless
+      // bundle. Without shipping the linux/x64 .node + libonnxruntime.so.1, the
+      // embedding lookup fails at cold start with "libonnxruntime.so.1: cannot
+      // open shared object file" and the pipeline falls back to text matching.
+      // Copying the native bin dir into the function keeps the binding loadable
+      // and the quantized model running fully on-device.
+      "./node_modules/onnxruntime-node/bin/napi-v6/linux/x64/**/*",
+    ],
   },
 };
 
