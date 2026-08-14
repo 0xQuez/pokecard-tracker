@@ -18,6 +18,12 @@
  *      candidates whose pricing/variant data align (via variantHints).
  *   4. needsConfirmation decision: top-2 gap < 0.15 OR a stamp/variant conflict.
  *
+ * T23.3: on the artwork-embedding path the final ranking is done by the hybrid
+ * matcher (hybrid-matcher.ts) — embedding similarity is the primary score, the
+ * vision variant/stamp reading breaks same-art ties, and `confirmationReason`
+ * carries a human explanation when needsConfirmation is true. The text path
+ * below (steps 2–4) remains the fallback when the embedding table is empty.
+ *
  * The pipeline returns a discriminated outcome; the route maps it to HTTP
  * status codes (400 unreadable, 404 no match, 502 tcg down, 503 vision unset).
  */
@@ -42,6 +48,10 @@ import {
   type EmbeddingCandidate,
   type RpcClient,
 } from "./embedding-lookup.ts";
+import {
+  hybridMatch,
+  type HybridCandidateInput,
+} from "./hybrid-matcher.ts";
 
 // ── Response contract (T22.5 documented shape) ──────────────────────────────
 
@@ -75,6 +85,8 @@ export interface IdentifyOk {
   status: "ok";
   candidates: IdentifyCandidate[];
   needsConfirmation: boolean;
+  /** Human reason when needsConfirmation is true (e.g. same-art variant tie). */
+  confirmationReason?: string | null;
   extracted: ExtractedIdentity;
 }
 
@@ -112,8 +124,12 @@ export type IdentifyOutcome =
 
 /** Top-2 score gap under which the UI must ask the user to confirm. */
 export const CONFIRMATION_GAP = 0.15;
-/** Max candidates returned when ambiguous. */
-export const AMBIGUOUS_CANDIDATE_LIMIT = 3;
+/**
+ * Max candidates returned when ambiguous. T23.3 raises this from 3 to 20: the
+ * UI (T23.4) renders the full ranked list so the user can eyeball same-art
+ * variant/stamp candidates instead of being forced to a 3-way guess.
+ */
+export const AMBIGUOUS_CANDIDATE_LIMIT = 20;
 /** Candidates returned when clearly unambiguous. */
 export const CLEAR_CANDIDATE_LIMIT = 1;
 /** Max embedding-similarity candidates the pipeline returns (T23.2). */
@@ -316,7 +332,57 @@ export function applyStampTiebreak(
   return candidates.sort((a, b) => b.score - a.score);
 }
 
-// ── Confirmation decision ────────────────────────────────────────────────────
+// ── Hybrid matcher (T23.3) ─────────────────────────────────────────────────
+
+export interface HybridTiebreakResult {
+  candidates: IdentifyCandidate[];
+  needsConfirmation: boolean;
+  /** Human reason when needsConfirmation (e.g. same-art variant/stamp tie). */
+  confirmationReason: string | null;
+}
+
+/**
+ * Fuse the T23.2 embedding-similarity ranking (primary) with the vision
+ * variant/stamp tiebreak (T23.3) into the final candidate list.
+ *
+ * The embedding candidates have no per-row stamp/variant metadata (the catalog
+ * keeps svp-44 as ONE record), so the hybrid matcher's "vision saw a stamp but
+ * no candidate metadata distinguishes it" branch fires whenever the vision
+ * model reads a pricing stamp on a same-art tie — the candidates stay grouped
+ * together and needsConfirmation is set so the user picks the actual print.
+ * See hybrid-matcher.ts for the full scoring rules.
+ */
+export function applyHybridTiebreak(
+  embeddingCandidates: IdentifyCandidate[],
+  identity: CardIdentity,
+): HybridTiebreakResult {
+  const inputs: HybridCandidateInput[] = embeddingCandidates.map((c) => ({
+    id: c.id,
+    name: c.name,
+    similarity: c.score,
+    // The catalog doesn't split same-art variants, so real candidates carry no
+    // distinguishing physical metadata. The synthetic/acceptance path tests
+    // the tiebreak directly against hybrid-matcher.hybridMatch.
+    variant: null,
+    stamp: null,
+  }));
+
+  const result = hybridMatch(inputs, identity);
+  const scoreById = new Map(
+    result.ranked.map((r) => [r.candidate.id, r.finalScore]),
+  );
+  // Re-rank the original IdentifyCandidates to match the hybrid order, carrying
+  // the final composite score forward.
+  const ranked = embeddingCandidates
+    .map((c) => ({ ...c, score: scoreById.get(c.id) ?? c.score }))
+    .sort((a, b) => b.score - a.score);
+
+  return {
+    candidates: ranked,
+    needsConfirmation: result.needsConfirmation,
+    confirmationReason: result.reason,
+  };
+}
 
 /**
  * needsConfirmation = true when the top-2 scores are close (< 0.15) OR when the
@@ -337,8 +403,9 @@ export function decideNeedsConfirmation(
 }
 
 /**
- * Pick how many candidates to return: 2–3 when ambiguous, exactly 1 when the
- * top match is clearly unambiguous.
+ * Pick how many candidates to return: up to AMBIGUOUS_CANDIDATE_LIMIT (20) when
+ * ambiguous, exactly 1 when the top match is clearly unambiguous. The UI
+ * (T23.4) handles rendering the 20-item ambiguous list.
  */
 export function trimCandidates(
   candidates: IdentifyCandidate[],
@@ -392,13 +459,15 @@ export async function tcgProbeUnhealthy(
  * Run the full identify pipeline: imageUrl -> vision -> (embedding lookup
  * PRIMARY | tcg text match fallback) -> tiebreak.
  *
- * T23.2 change: when `deps.embedding` is supplied and the card_embeddings table
- * is populated, the artwork-embedding path is the primary candidate source and
- * returns up to EMBEDDING_CANDIDATE_LIMIT (20) similarity-ranked candidates.
- * Vision extraction ALWAYS runs first (T23.3 needs the extracted identity for
- * variant/stamp tiebreak). The pokemontcg.io text matcher is used only as a
- * fallback when the embedding table is empty/unavailable (or no embedding deps
- * are supplied — the pre-T23.2 behavior).
+ * T23.2/T23.3 change: when `deps.embedding` is supplied and the card_embeddings
+ * table is populated, the artwork-embedding path is the primary candidate
+ * source and returns up to EMBEDDING_CANDIDATE_LIMIT (20) similarity-ranked
+ * candidates. Vision extraction ALWAYS runs first (T23.3 needs the extracted
+ * identity for variant/stamp tiebreak). The embedding path is then fused with
+ * the hybrid matcher: similarity primary + vision variant/stamp tiebreak +
+ * needsConfirmation (+ confirmationReason). The pokemontcg.io text matcher is
+ * used only as a fallback when the embedding table is empty/unavailable (or no
+ * embedding deps are supplied — the pre-T23.2 behavior).
  *
  * Never throws for expected conditions; returns a discriminated IdentifyOutcome
  * the route maps to HTTP status codes.
@@ -429,14 +498,16 @@ export async function runIdentifyPipeline(
       identity,
     );
     if (embeddingCandidates.length > 0) {
-      const candidates = applyStampTiebreak(embeddingCandidates, identity);
-      const needsConfirmation = decideNeedsConfirmation(candidates, identity);
+      // T23.3: hybrid matcher — embedding similarity (primary) fused with the
+      // vision variant/stamp tiebreak. When the vision model reads a pricing
+      // stamp on a same-art tie the candidates stay grouped and
+      // needsConfirmation is set; otherwise an unambiguous top match trims to 1.
+      const hybrid = applyHybridTiebreak(embeddingCandidates, identity);
       return {
         status: "ok",
-        // T23.2 keeps the full ranked list (up to 20) for T23.4's UI + T23.3's
-        // hybrid tiebreak to consume; no 1/3 trimming on the embedding path.
-        candidates: candidates.slice(0, EMBEDDING_CANDIDATE_LIMIT),
-        needsConfirmation,
+        candidates: trimCandidates(hybrid.candidates, hybrid.needsConfirmation),
+        needsConfirmation: hybrid.needsConfirmation,
+        confirmationReason: hybrid.confirmationReason,
         extracted: identity,
       };
     }

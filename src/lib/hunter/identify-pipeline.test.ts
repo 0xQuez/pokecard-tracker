@@ -8,6 +8,7 @@ import {
   runEmbeddingLookup,
   embeddingToCandidate,
   applyStampTiebreak,
+  applyHybridTiebreak,
   decideNeedsConfirmation,
   trimCandidates,
   buildVariantHints,
@@ -137,12 +138,15 @@ test("decideNeedsConfirmation: PC stamp forces confirmation even alone", () => {
   assert.equal(decideNeedsConfirmation(c, charmanderPC), true);
 });
 
-test("trimCandidates: unambiguous -> 1; ambiguous -> up to 3", () => {
-  const list: IdentifyCandidate[] = [
-    { id: "1", name: "A", set: { id: "s", name: "S" }, number: "1", score: 0.9, variantHints: [] },
-    { id: "2", name: "B", set: { id: "s", name: "S" }, number: "2", score: 0.85, variantHints: [] },
-    { id: "3", name: "C", set: { id: "s", name: "S" }, number: "3", score: 0.8, variantHints: [] },
-  ];
+test("trimCandidates: unambiguous -> 1; ambiguous -> up to 20", () => {
+  const list: IdentifyCandidate[] = Array.from({ length: 20 }, (_, i) => ({
+    id: String(i + 1),
+    name: "A",
+    set: { id: "s", name: "S" },
+    number: String(i + 1),
+    score: 1 - i * 0.01,
+    variantHints: [],
+  }));
   assert.equal(trimCandidates(list, false).length, CLEAR_CANDIDATE_LIMIT);
   assert.equal(trimCandidates(list, true).length, AMBIGUOUS_CANDIDATE_LIMIT);
 });
@@ -184,7 +188,7 @@ test("pipeline: ambiguous tie -> 2-3 candidates + needsConfirmation true", async
   assert.equal(out.status, "ok");
   if (out.status !== "ok") return;
   assert.equal(out.needsConfirmation, true);
-  assert.ok(out.candidates.length >= 2 && out.candidates.length <= 3);
+  assert.ok(out.candidates.length >= 2 && out.candidates.length <= AMBIGUOUS_CANDIDATE_LIMIT);
 });
 
 test("pipeline: unreadable -> UNREADABLE_IMAGE", async () => {
@@ -355,6 +359,84 @@ test("pipeline (embedding): empty table falls back to text matcher", async () =>
   assert.equal(out.status, "ok");
   if (out.status !== "ok") return;
   assert.equal(textMatchRan, true);
+  assert.equal(out.candidates[0].id, "svp-44");
+});
+
+// ── hybrid matcher wiring (T23.3) ─────────────────────────────────────────
+
+test("applyHybridTiebreak: same-art stamp tie -> grouped + needsConfirmation", () => {
+  const out = applyHybridTiebreak(
+    [
+      embeddingToCandidate(embCand({ similarity: 0.94 }), charmanderPC),
+      embeddingToCandidate(
+        embCand({ cardId: "svp-44b", similarity: 0.93 }),
+        charmanderPC,
+      ),
+    ],
+    charmanderPC,
+  );
+  assert.equal(out.needsConfirmation, true);
+  assert.ok(out.confirmationReason);
+  // Both retained (never collapse an ambiguous tie to a single candidate).
+  assert.equal(out.candidates.length, 2);
+  // Hybrid order: the higher-similarity one stays first (no distinguishing
+  // metadata in the catalog, so no bonus — same-art group preserved).
+  assert.equal(out.candidates[0].id, "svp-44");
+});
+
+test("applyHybridTiebreak: distinct art -> unambiguous single winner", () => {
+  const out = applyHybridTiebreak(
+    [
+      embeddingToCandidate(embCand({ similarity: 0.99 }), charmanderPlain),
+      embeddingToCandidate(
+        embCand({ cardId: "det1-4", name: "Detective Pikachu's Charmander", similarity: 0.7 }),
+        charmanderPlain,
+      ),
+    ],
+    charmanderPlain,
+  );
+  assert.equal(out.needsConfirmation, false);
+  assert.equal(out.confirmationReason, null);
+  assert.equal(out.candidates[0].id, "svp-44");
+});
+
+test("pipeline (embedding): PC-stamped same-art tie -> confirm + reason surfaced", async () => {
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/svp/44.png", {
+    visionFn: visionReturning(charmanderPC),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => [
+        embCand({ similarity: 0.94 }),
+        embCand({ cardId: "svp-44b", similarity: 0.93 }),
+      ],
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(out.needsConfirmation, true);
+  assert.ok(out.confirmationReason && out.confirmationReason.includes("variant"));
+  // Both same-art candidates kept for the user to pick the actual print.
+  assert.ok(out.candidates.length >= 2);
+});
+
+test("pipeline (embedding): clear-cut -> needsConfirmation false, single candidate", async () => {
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/svp/44.png", {
+    visionFn: visionReturning(charmanderPlain),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => [
+        embCand({ similarity: 0.99 }),
+        embCand({ cardId: "det1-4", name: "Detective Pikachu's Charmander", similarity: 0.7 }),
+      ],
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(out.needsConfirmation, false);
+  assert.equal(out.confirmationReason, null);
+  assert.equal(out.candidates.length, CLEAR_CANDIDATE_LIMIT);
   assert.equal(out.candidates[0].id, "svp-44");
 });
 

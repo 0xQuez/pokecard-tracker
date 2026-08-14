@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "test:settlement": "node scripts/test-settlement.mjs",
-    "test": "node --test src/lib/valuation-ui.test.ts src/lib/card-scan.test.ts src/lib/card-image-upload.test.ts src/lib/hunter/vision-identify.test.ts src/lib/hunter/identify-pipeline.test.ts src/lib/hunter/embedding-lookup.test.ts && vitest run",
+    "test": "node --test src/lib/valuation-ui.test.ts src/lib/card-scan.test.ts src/lib/card-image-upload.test.ts src/lib/hunter/vision-identify.test.ts src/lib/hunter/identify-pipeline.test.ts src/lib/hunter/embedding-lookup.test.ts src/lib/hunter/hybrid-matcher.test.ts && vitest run",
     "test:watch": "vitest",
     "test:lib": "node --test src/lib/valuation-ui.test.ts",
     "start": "next start",

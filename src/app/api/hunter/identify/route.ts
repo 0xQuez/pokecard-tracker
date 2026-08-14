@@ -93,6 +93,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         candidates: outcome.candidates,
         needsConfirmation: outcome.needsConfirmation,
+        confirmationReason: outcome.confirmationReason ?? null,
         extracted: outcome.extracted,
       });
     case "unreadable":
