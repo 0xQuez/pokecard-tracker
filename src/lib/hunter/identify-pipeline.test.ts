@@ -25,6 +25,7 @@ import {
 import { HttpError } from "./tcg-match.ts";
 import { VisionNotConfigured } from "./vision-identify.ts";
 import type { EmbeddingCandidate } from "./embedding-lookup.ts";
+import { normalizeName } from "./hybrid-matcher.ts";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -424,6 +425,297 @@ test("pipeline (embedding): none match vision name -> name-first re-query return
   assert.equal(out.candidates[0].id, "base1-56");
   // Multiple same-name prints -> the user must confirm which variant/print.
   assert.equal(out.needsConfirmation, true);
+});
+
+// ── T28.1 name-first fallback: containment rule + activation coverage ──────
+//
+// DECISION (T28.2): the name match that gates the name-first fallback (and the
+// T26.5 identity veto) is STRICT EXACT normalized-name equality
+// (`normalizeName(candidate) === normalizeName(visionName)`). Containment /
+// substring matching is explicitly REJECTED: "Brock's Onix" (Gym Heroes) and
+// "Onix EX" are genuinely distinct, differently-valued cards from base "Onix",
+// so treating vision "Onix" as matching "Brock's Onix" would resurrect the
+// mismatched-name-impostor bug T28.1 was built to eliminate. The tests below
+// pin this exact-equality rule.
+
+test("T28.1 containment rule: name match is strict exact equality (no substring/containment)", () => {
+  // Exact same-name match -> equal.
+  assert.equal(normalizeName("Makuhita"), normalizeName("Makuhita"));
+  // Containment (vision name is a substring of candidate name) -> NOT a match.
+  assert.notEqual(normalizeName("Onix"), normalizeName("Brock's Onix"));
+  // Reverse containment (candidate name is a substring of vision name) -> NOT a match.
+  assert.notEqual(normalizeName("Brock's Onix"), normalizeName("Onix"));
+  // Partial-word suffix ("Onix EX") -> NOT a match under strict equality.
+  assert.notEqual(normalizeName("Onix"), normalizeName("Onix EX"));
+});
+
+test("pipeline (T28.1): Makuhita — no embedding name match (Numel/Eevee/Ampharos/Stunfisk) -> name-first re-query returns only Makuhita", async () => {
+  const impostors = [
+    embCand({ cardId: "ex1-80", name: "Numel", setId: "ex1", setName: "Ruby & Sapphire", number: "80", similarity: 0.96 }),
+    embCand({ cardId: "base1-58", name: "Eevee", setId: "base1", setName: "Base Set", number: "58", similarity: 0.94 }),
+    embCand({ cardId: "ex1-24", name: "Ampharos", setId: "ex1", setName: "Ruby & Sapphire", number: "24", similarity: 0.92 }),
+    embCand({ cardId: "ex3-59", name: "Stunfisk", setId: "ex3", setName: "Dragon", number: "59", similarity: 0.9 }),
+  ];
+  let textQueryRan = false;
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/ex7/61.png", {
+    visionFn: visionReturning({
+      name: "Makuhita",
+      setName: "",
+      setCode: null,
+      collectorNumber: "",
+      variant: null,
+      print: null,
+      stamp: null,
+      confidence: 0.85,
+    }),
+    embedding: { client: {} as never, embed: async () => new Float32Array(512), nearest: async () => impostors },
+    matchOptions: {
+      fetchFn: async () => {
+        textQueryRan = true;
+        return {
+          data: [
+            { id: "ex7-61", name: "Makuhita", number: "61", set: { id: "ex7", name: "Crystal Guardians" }, images: { small: "https://images.pokemontcg.io/ex7/61.png", large: "https://images.pokemontcg.io/ex7/61_hires.png" } },
+            { id: "ex10-58", name: "Makuhita", number: "58", set: { id: "ex10", name: "Unseen Forces" }, images: { small: "https://images.pokemontcg.io/ex10/58.png", large: "https://images.pokemontcg.io/ex10/58_hires.png" } },
+            { id: "ex9-66", name: "Makuhita", number: "66", set: { id: "ex9", name: "Emerald" }, images: { small: "https://images.pokemontcg.io/ex9/66.png", large: "https://images.pokemontcg.io/ex9/66_hires.png" } },
+          ],
+        };
+      },
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(textQueryRan, true, "name-first fallback must re-query the catalog by name");
+  assert.ok(out.candidates.length >= 1);
+  assert.ok(
+    out.candidates.every((c) => c.name === "Makuhita"),
+    "every candidate must be exactly 'Makuhita' — no impostor",
+  );
+  // Multiple same-name prints -> user must confirm the variant/print.
+  assert.equal(out.needsConfirmation, true);
+});
+
+test("pipeline (T28.1): Onix — no embedding name match (Slugma/Lickitung/Celebi/Milotic/Zubat) -> returns only Onix", async () => {
+  const impostors = [
+    embCand({ cardId: "neo1-61", name: "Slugma", setId: "neo1", setName: "Neo Genesis", number: "61", similarity: 0.96 }),
+    embCand({ cardId: "base1-57", name: "Lickitung", setId: "base1", setName: "Base Set", number: "57", similarity: 0.94 }),
+    embCand({ cardId: "neo3-6", name: "Celebi", setId: "neo3", setName: "Neo Revelation", number: "6", similarity: 0.93 }),
+    embCand({ cardId: "ex10-58", name: "Milotic", setId: "ex10", setName: "Unseen Forces", number: "58", similarity: 0.91 }),
+    embCand({ cardId: "base1-63", name: "Zubat", setId: "base1", setName: "Base Set", number: "63", similarity: 0.9 }),
+  ];
+  let textQueryRan = false;
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/base1/56.png", {
+    visionFn: visionReturning({
+      name: "Onix",
+      setName: "",
+      setCode: null,
+      collectorNumber: "",
+      variant: null,
+      print: null,
+      stamp: null,
+      confidence: 0.85,
+    }),
+    embedding: { client: {} as never, embed: async () => new Float32Array(512), nearest: async () => impostors },
+    matchOptions: {
+      fetchFn: async () => {
+        textQueryRan = true;
+        return {
+          data: [
+            { id: "base1-56", name: "Onix", number: "56", set: { id: "base1", name: "Base Set" }, images: { small: "https://images.pokemontcg.io/base1/56.png", large: "https://images.pokemontcg.io/base1/56_hires.png" } },
+            { id: "ex-61", name: "Onix", number: "61", set: { id: "ex", name: "Expedition" }, images: { small: "https://images.pokemontcg.io/ex/61.png", large: "https://images.pokemontcg.io/ex/61_hires.png" } },
+          ],
+        };
+      },
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(textQueryRan, true);
+  assert.ok(out.candidates.length >= 1);
+  assert.ok(out.candidates.every((c) => c.name === "Onix"), "every candidate must be exactly 'Onix'");
+});
+
+test("pipeline (T28.1): embedding HAS a name match -> fallback does NOT fire (identity veto handles it)", async () => {
+  // Impostor has HIGHER art similarity, but a real Charmander is present in the
+  // candidates -> the identity veto ranks the true card first AND the name-first
+  // fallback must NOT re-query the catalog (that would be redundant).
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/svp/44.png", {
+    visionFn: visionReturning(charmanderPlain),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => [
+        embCand({ cardId: "det1-4", name: "Detective Pikachu's Charmander", setId: "det1", setName: "Detective Pikachu", number: "4", similarity: 0.97 }),
+        embCand({ cardId: "svp-44", name: "Charmander", number: "44", similarity: 0.9 }),
+      ],
+    },
+    matchOptions: {
+      // If the name-first fallback (or any text path) ran, this would blow up the test.
+      fetchFn: async () => {
+        throw new Error("text matcher must NOT run when an embedding candidate matches the vision name");
+      },
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(out.candidates[0].id, "svp-44", "identity veto picks the name-matching Charmander");
+  assert.equal(out.candidates[0].name, "Charmander");
+  assert.equal(out.needsConfirmation, false);
+});
+
+test("pipeline (T28.1): empty embedding table -> full-identity text fallback (NOT name-first)", async () => {
+  // When embedding returns [], the pipeline falls through to the T22.4 text
+  // matcher with the FULL identity (set + number), not the name-only query the
+  // name-first fallback uses. Assert on the URL to prove which path ran.
+  let seenUrl = "";
+  const out = await runIdentifyPipeline("https://img/x.png", {
+    visionFn: visionReturning(charmanderPlain),
+    embedding: { client: {} as never, embed: async () => new Float32Array(512), nearest: async () => [] },
+    matchOptions: {
+      fetchFn: async (url: string) => {
+        seenUrl = url;
+        return { data: [svp44Raw] };
+      },
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.ok(
+    decodeURIComponent(seenUrl).includes("set.id:svp"),
+    "text fallback must carry the full identity (set code)",
+  );
+  assert.equal(out.candidates[0].id, "svp-44");
+});
+
+test("pipeline (T28.1): containment does NOT create a false match — Brock's Onix / Onix EX still trigger fallback", async () => {
+  // Vision reads "Onix". The embedding candidates are "Brock's Onix" and "Onix EX"
+  // — neither equals "Onix" under strict equality, so the fallback re-queries by
+  // name and presents only exact "Onix" prints. The distinct cards are never
+  // surfaced as if they were the base Onix.
+  let textQueryRan = false;
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/gym2/13.png", {
+    visionFn: visionReturning({
+      name: "Onix",
+      setName: "",
+      setCode: null,
+      collectorNumber: "",
+      variant: null,
+      print: null,
+      stamp: null,
+      confidence: 0.85,
+    }),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => [
+        embCand({ cardId: "gym2-13", name: "Brock's Onix", setId: "gym2", setName: "Gym Challenge", number: "13", similarity: 0.98 }),
+        embCand({ cardId: "ex15-62", name: "Onix EX", setId: "ex15", setName: "Dragon Frontiers", number: "62", similarity: 0.95 }),
+      ],
+    },
+    matchOptions: {
+      fetchFn: async () => {
+        textQueryRan = true;
+        return {
+          data: [
+            { id: "base1-56", name: "Onix", number: "56", set: { id: "base1", name: "Base Set" }, images: { small: "https://images.pokemontcg.io/base1/56.png" } },
+          ],
+        };
+      },
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(textQueryRan, true, "containment must NOT suppress the fallback");
+  assert.ok(out.candidates.length >= 1);
+  assert.ok(out.candidates.every((c) => c.name === "Onix"), "no Brock's Onix / Onix EX surfaced as Onix");
+});
+
+test("pipeline (T28.1): name-first with single clear match -> needsConfirmation false", async () => {
+  // The name re-query returns exactly one print -> unambiguous, no confirmation.
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/ex7/61.png", {
+    visionFn: visionReturning({
+      name: "Makuhita",
+      setName: "",
+      setCode: null,
+      collectorNumber: "",
+      variant: null,
+      print: null,
+      stamp: null,
+      confidence: 0.85,
+    }),
+    embedding: { client: {} as never, embed: async () => new Float32Array(512), nearest: async () => [
+      embCand({ cardId: "ex1-80", name: "Numel", setId: "ex1", setName: "Ruby & Sapphire", number: "80", similarity: 0.96 }),
+    ] },
+    matchOptions: {
+      fetchFn: async () => ({
+        data: [
+          { id: "ex7-61", name: "Makuhita", number: "61", set: { id: "ex7", name: "Crystal Guardians" }, images: { small: "https://images.pokemontcg.io/ex7/61.png", large: "https://images.pokemontcg.io/ex7/61_hires.png" } },
+        ],
+      }),
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(out.needsConfirmation, false);
+  assert.equal(out.candidates.length, CLEAR_CANDIDATE_LIMIT);
+  assert.equal(out.candidates[0].name, "Makuhita");
+});
+
+test("pipeline (T28.1): name-first candidates carry valid 0..1 scores and images", async () => {
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/base1/56.png", {
+    visionFn: visionReturning({
+      name: "Onix",
+      setName: "",
+      setCode: null,
+      collectorNumber: "",
+      variant: null,
+      print: null,
+      stamp: null,
+      confidence: 0.85,
+    }),
+    embedding: { client: {} as never, embed: async () => new Float32Array(512), nearest: async () => [
+      embCand({ cardId: "neo1-61", name: "Slugma", setId: "neo1", setName: "Neo Genesis", number: "61", similarity: 0.96 }),
+    ] },
+    matchOptions: {
+      fetchFn: async () => ({
+        data: [
+          { id: "base1-56", name: "Onix", number: "56", set: { id: "base1", name: "Base Set" }, images: { small: "https://images.pokemontcg.io/base1/56.png", large: "https://images.pokemontcg.io/base1/56_hires.png" } },
+        ],
+      }),
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.ok(out.candidates.length >= 1);
+  for (const c of out.candidates) {
+    assert.ok(typeof c.score === "number" && c.score >= 0 && c.score <= 1, `score ${c.score} must be within 0..1`);
+    assert.ok(c.imageSmall && c.imageSmall.length > 0, "name-first candidate must carry an image");
+  }
+});
+
+test("applyHybridTiebreak: identity boost + set/number refinement apply to name-fallback candidates", () => {
+  // Both candidates match the vision name (they came from the name-first re-query),
+  // so the identity boost applies to both; the one whose set/number also matches
+  // the vision reading gets the extra SET_NUMBER_MATCH_BONUS and ranks first even
+  // with identical artwork similarity.
+  const identity = { ...charmanderPlain, name: "Makuhita", setCode: "ex7", collectorNumber: "61", stamp: null };
+  const out = applyHybridTiebreak(
+    [
+      { id: "ex10-58", name: "Makuhita", set: { id: "ex10", name: "Unseen Forces" }, number: "58", score: 0.78, imageSmall: "https://images.pokemontcg.io/ex10/58.png", imageLarge: "https://images.pokemontcg.io/ex10/58_hires.png", variantHints: [] },
+      { id: "ex7-61", name: "Makuhita", set: { id: "ex7", name: "Crystal Guardians" }, number: "61", score: 0.78, imageSmall: "https://images.pokemontcg.io/ex7/61.png", imageLarge: "https://images.pokemontcg.io/ex7/61_hires.png", variantHints: [] },
+    ],
+    identity,
+  );
+  assert.equal(out.candidates[0].id, "ex7-61", "set/number match must refine same-name prints");
+  assert.ok(out.candidates[0].score > out.candidates[1].score, "identity boost must give the refined candidate a higher score");
+  // Scores clamped into 0..1 for the UI contract.
+  for (const c of out.candidates) assert.ok(c.score >= 0 && c.score <= 1);
 });
 
 test("pipeline (embedding): empty table falls back to text matcher", async () => {
