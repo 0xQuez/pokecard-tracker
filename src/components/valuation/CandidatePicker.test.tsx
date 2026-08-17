@@ -84,6 +84,42 @@ describe("CandidatePicker", () => {
     expect(prices).toContain("$245.00");
   });
 
+  it("renders an inline per-variant price hint next to each finish label (T30.5)", () => {
+    // Latios δ: one scan, two physical prints with a ~16x market-price gap. The
+    // picker must show the finish AND its price so the user can choose the ~$250
+    // reverse holo over the ~$15 regular.
+    const latios: IdentifyCandidate[] = [
+      {
+        name: "Latios δ",
+        set: "Holon Phantoms",
+        number: "22",
+        variant: "Regular",
+        price: 15,
+        confidence: "high",
+        score: 0.99,
+      },
+      {
+        name: "Latios δ",
+        set: "Holon Phantoms",
+        number: "22",
+        variant: "Reverse Holo",
+        price: 250,
+        confidence: "high",
+        score: 0.98,
+      },
+    ];
+    render(<CandidatePicker candidates={latios} onSelect={vi.fn()} />);
+
+    const hints = screen
+      .getAllByTestId("variant-price-hint")
+      .map((el) => el.textContent);
+    expect(hints).toContain("≈$15.00");
+    expect(hints).toContain("≈$250.00");
+    // Finish labels remain rendered alongside their hints.
+    expect(screen.getByText("Regular")).toBeTruthy();
+    expect(screen.getByText("Reverse Holo")).toBeTruthy();
+  });
+
   it("fires onSelect with the chosen candidate on tap", () => {
     const onSelect = vi.fn();
     render(

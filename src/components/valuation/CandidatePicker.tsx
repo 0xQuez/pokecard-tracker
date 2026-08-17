@@ -214,13 +214,38 @@ export default function CandidatePicker({
                 {c.variant && (
                   <div
                     style={{
-                      fontSize: 10,
-                      color: "var(--ink)",
-                      fontWeight: 600,
+                      display: "flex",
+                      alignItems: "baseline",
+                      gap: 6,
                       marginTop: 2,
+                      flexWrap: "wrap",
                     }}
                   >
-                    {c.variant}
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: "var(--ink)",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {c.variant}
+                    </span>
+                    {/* T30.5: per-variant market-price hint so the user sees the
+                        price gap while choosing (e.g. regular ≈$15 vs reverse
+                        holo ≈$250). Only rendered when the identify response
+                        carries a price for this finish. */}
+                    {typeof c.price === "number" && (
+                      <span
+                        data-testid="variant-price-hint"
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color: "var(--sage)",
+                        }}
+                      >
+                        ≈{money(c.price)}
+                      </span>
+                    )}
                   </div>
                 )}
                 {/* Similarity score — % + bar so the ranking is readable at a glance */}

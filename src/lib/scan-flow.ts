@@ -78,6 +78,16 @@ export interface RawIdentifyCandidate {
   score: number;
   /** Physical-print options this card can be (regular / PC-exclusive / …). */
   variantHints: string[];
+  /**
+   * Per-finish market prices (USD) keyed by the SAME finish-label strings used
+   * in `variantHints` (T30.5). Backend prerequisite T30.6 populates this when
+   * pricing is available at identify time — e.g.
+   * `{ "Regular": 15, "Reverse Holo": 250 }` for the Latios δ one-row-many-finish
+   * case. When absent/empty the picker renders each row without a price hint
+   * (the pre-T30.6 behavior). Optional so the identify route never breaks when
+   * the pricing source is unavailable.
+   */
+  variantPrices?: Record<string, number>;
 }
 
 /** Map a numeric match score (0..1) to the confidence label the picker shows. */
@@ -109,12 +119,20 @@ export function mapRawCandidate(raw: RawIdentifyCandidate): IdentifyCandidate[] 
     Array.isArray(raw?.variantHints) && raw.variantHints.length > 0
       ? raw.variantHints
       : [null];
+  // T30.5: per-finish prices the identify response MAY carry, keyed by the same
+  // labels as `variantHints`. Missing/empty -> every row renders "—" (pre-T30.6).
+  const prices =
+    raw?.variantPrices && typeof raw.variantPrices === "object"
+      ? raw.variantPrices
+      : {};
   return hints.map((variant) => ({
     name: raw?.name ?? "Unknown card",
     set,
     number: raw?.number ?? null,
     variant,
-    price: null, // the identify API doesn't price candidates — the picker shows "—"
+    // Surface the price for this row's finish so the picker shows the gap
+    // (e.g. regular ~$15 vs reverse holo ~$250). No key for a label -> null -> "—".
+    price: variant ? prices[variant] ?? null : null,
     imageUrl,
     confidence,
     score: raw?.score ?? null,

@@ -62,6 +62,20 @@ const RAW_OTHER = {
   variantHints: [],
 };
 
+// T30.5: the Latios δ case — one catalog row that stands for several physical
+// finishes, with per-finish market prices keyed by the SAME labels as
+// variantHints. This is the shape T30.6 (backend pricing) produces once live.
+const RAW_LATIOS = {
+  id: "ex13-22",
+  name: "Latios δ",
+  set: { id: "ex13", name: "Holon Phantoms" },
+  number: "22",
+  imageSmall: "https://img/latios.jpg",
+  score: 0.99,
+  variantHints: ["Regular", "Reverse Holo"],
+  variantPrices: { "Regular": 15, "Reverse Holo": 250 },
+};
+
 function resp(partial: Partial<IdentifyResponse> & { candidates: IdentifyCandidate[] }): IdentifyResponse {
   return { needsConfirmation: false, ...partial };
 }
@@ -147,6 +161,30 @@ test("mapRawCandidate: uses imageLarge when imageSmall absent", () => {
     imageLarge: "https://img/pikachu-lg.jpg",
   } as unknown as RawIdentifyCandidate);
   assert.equal(out[0].imageUrl, "https://img/pikachu-lg.jpg");
+});
+
+test("mapRawCandidate: attaches per-finish price hints from variantPrices (T30.5)", () => {
+  const out = mapRawCandidate(RAW_LATIOS as RawIdentifyCandidate);
+  assert.equal(out.length, 2);
+  // Each finish row carries its own market price — the $15 vs $250 gap.
+  assert.equal(out[0].variant, "Regular");
+  assert.equal(out[0].price, 15);
+  assert.equal(out[1].variant, "Reverse Holo");
+  assert.equal(out[1].price, 250);
+});
+
+test("mapRawCandidate: rows without a matching price key render no price hint", () => {
+  const out = mapRawCandidate({
+    ...RAW_LATIOS,
+    variantPrices: { "Regular": 15 }, // Reverse Holo has no price
+  } as RawIdentifyCandidate);
+  assert.equal(out[0].price, 15);
+  assert.equal(out[1].price, null);
+});
+
+test("mapRawCandidate: no variantPrices means every row stays price-less", () => {
+  const out = mapRawCandidate(RAW_REGULAR as RawIdentifyCandidate); // no variantPrices
+  for (const row of out) assert.equal(row.price, null);
 });
 
 test("mapRawCandidates: flatMaps multiple raw candidates", () => {
