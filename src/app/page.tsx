@@ -10,11 +10,12 @@ import Settle from "@/components/Settle";
 import History from "@/components/History";
 import HunterTool from "@/components/HunterTool";
 import ProfileGate from "@/components/ProfileGate";
+import GuestApp from "@/components/GuestApp";
 import EditModal from "@/components/EditModal";
 import MarkSoldModal from "@/components/MarkSoldModal";
 
 type Screen = "home" | "activity" | "add" | "settle" | "history" | "hunter";
-type Profile = "quez" | "stevie";
+type Profile = "quez" | "stevie" | "guest";
 
 type Card = {
   id: number;
@@ -74,18 +75,23 @@ export default function Page() {
     if (authed && profile) {
       setIsAuthed(true);
       setCurrentProfile(profile);
+      if (profile === "guest") setActiveScreen("hunter");
     }
   }, []);
 
   useEffect(() => {
     if (!isAuthed) return;
+    // Guests never load the owners' card ledger — the hunt tool needs no card data.
+    if (currentProfile === "guest") return;
     fetchCards();
-  }, [isAuthed, fetchCards]);
+  }, [isAuthed, currentProfile, fetchCards]);
 
   const handleAuth = (profile: Profile, password: string) => {
-    if (password === process.env.NEXT_PUBLIC_APP_PASSWORD) {
+    const isGuest = profile === "guest";
+    if (isGuest || password === process.env.NEXT_PUBLIC_APP_PASSWORD) {
       setIsAuthed(true);
       setCurrentProfile(profile);
+      if (isGuest) setActiveScreen("hunter");
       sessionStorage.setItem("pokecards_auth", "true");
       sessionStorage.setItem("pokecards_profile", profile);
     } else {
@@ -96,6 +102,7 @@ export default function Page() {
   const handleLogout = () => {
     setIsAuthed(false);
     setCurrentProfile("quez");
+    setActiveScreen("home");
     sessionStorage.removeItem("pokecards_auth");
     sessionStorage.removeItem("pokecards_profile");
   };
@@ -160,6 +167,10 @@ export default function Page() {
   };
 
   if (!isAuthed) return <ProfileGate onAuth={handleAuth} />;
+
+  // Guests get a dedicated shell with only the hunt tool — no financial tabs,
+  // no ledger, no write affordances.
+  if (currentProfile === "guest") return <GuestApp onLogout={handleLogout} />;
 
   const otherUser = currentProfile === "quez" ? "stevie" : "quez";
   const currentUserCapitalized = userCapitalize(currentProfile);

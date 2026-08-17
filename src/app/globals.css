@@ -1102,6 +1102,45 @@ input {
   color: var(--text-low);
 }
 
+/* Guest option: full-width, dashed, visually distinct from the two owners */
+.profile-option.guest {
+  grid-column: 1 / -1;
+}
+
+.profile-option.guest label {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 16px;
+  border-style: dashed;
+  border-color: var(--line-strong);
+  text-align: left;
+}
+
+.profile-option.guest .name {
+  font-size: 15px;
+}
+
+.profile-option.guest .role {
+  margin-left: auto;
+  text-align: right;
+  max-width: 60%;
+}
+
+.profile-option.guest input:checked + label {
+  border-color: var(--sand);
+  background: var(--surface-3);
+}
+
+.avatar.guest {
+  width: 60px;
+  height: 60px;
+  font-size: 18px;
+  border: none;
+  background: var(--surface-2);
+  color: var(--sand);
+  border: 1px dashed var(--line-strong);
+}
+
 .password-field {
   text-align: left;
   margin-bottom: 16px;

@@ -17,19 +17,21 @@ import {
 } from "@/lib/scan-flow";
 import type { CardPriceResult, CardIdentity, CardRarity, CardCondition, CardEdition, GradeLevel } from "@/lib/models";
 
-export default function HunterTool() {
+export default function HunterTool({ guest = false }: { guest?: boolean }) {
   const [activeTab, setActiveTab] = useState<"search" | "weekly">("search");
   return (
     <div className="page page-narrow">
       <div className="topbar">
         <div className="hello">
-          HunterTool
+          {guest ? "Card Hunter" : "HunterTool"}
           <b>Find cards worth buying &amp; grading</b>
         </div>
-        <div className="pair">
-          <div className="avatar u1">Q</div>
-          <div className="avatar u2">S</div>
-        </div>
+        {!guest && (
+          <div className="pair">
+            <div className="avatar u1">Q</div>
+            <div className="avatar u2">S</div>
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -52,24 +54,26 @@ export default function HunterTool() {
         >
           🔍 Search &amp; Calc
         </button>
-        <button
-          onClick={() => setActiveTab("weekly")}
-          style={{
-            flex: 1,
-            padding: "10px 0",
-            borderRadius: 8,
-            border: "1px solid",
-            borderColor: activeTab === "weekly" ? "var(--ink)" : "var(--border)",
-            background: activeTab === "weekly" ? "var(--ink)" : "transparent",
-            color: activeTab === "weekly" ? "#fff" : "var(--text-mid)",
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: "pointer",
-            transition: "all 0.15s ease",
-          }}
-        >
-          🎯 Weekly Hunt
-        </button>
+        {!guest && (
+          <button
+            onClick={() => setActiveTab("weekly")}
+            style={{
+              flex: 1,
+              padding: "10px 0",
+              borderRadius: 8,
+              border: "1px solid",
+              borderColor: activeTab === "weekly" ? "var(--ink)" : "var(--border)",
+              background: activeTab === "weekly" ? "var(--ink)" : "transparent",
+              color: activeTab === "weekly" ? "#fff" : "var(--text-mid)",
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "all 0.15s ease",
+            }}
+          >
+            🎯 Weekly Hunt
+          </button>
+        )}
       </div>
 
       {activeTab === "search" ? <SearchTab /> : <WeeklyHunt />}
