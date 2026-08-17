@@ -519,7 +519,7 @@ export function ShareControls({ shareToken, origin, onRegenerate, copy }: ShareC
     const out = await onRegenerate();
     if (out.kind === "ok") {
       setRegen("done");
-      setRegenMsg("New link created — the old one is revoked.");
+      setRegenMsg("New link created. The old one is revoked.");
     } else {
       setRegen("error");
       setRegenMsg(out.message);

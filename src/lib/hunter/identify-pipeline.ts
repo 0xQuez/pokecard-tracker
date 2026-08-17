@@ -18,11 +18,13 @@
  *      candidates whose pricing/variant data align (via variantHints).
  *   4. needsConfirmation decision: top-2 gap < 0.15 OR a stamp/variant conflict.
  *
- * T23.3: on the artwork-embedding path the final ranking is done by the hybrid
- * matcher (hybrid-matcher.ts) — embedding similarity is the primary score, the
- * vision variant/stamp reading breaks same-art ties, and `confirmationReason`
- * carries a human explanation when needsConfirmation is true. The text path
- * below (steps 2–4) remains the fallback when the embedding table is empty.
+ * T23.3/T26.1: on the artwork-embedding path the final ranking is done by the
+ * hybrid matcher (hybrid-matcher.ts) — the vision NAME is the primary ranking
+ * signal (a true veto over mismatched-name candidates), artwork similarity
+ * ranks within the matching tier, the vision variant/stamp reading breaks
+ * same-art ties, and `confirmationReason` carries a human explanation when
+ * needsConfirmation is true. The text path below (steps 2–4) remains the
+ * fallback when the embedding table is empty.
  *
  * The pipeline returns a discriminated outcome; the route maps it to HTTP
  * status codes (400 unreadable, 404 no match, 502 tcg down, 503 vision unset).
@@ -473,8 +475,9 @@ export async function tcgProbeUnhealthy(
  * source and returns up to EMBEDDING_CANDIDATE_LIMIT (20) similarity-ranked
  * candidates. Vision extraction ALWAYS runs first (T23.3 needs the extracted
  * identity for variant/stamp tiebreak). The embedding path is then fused with
- * the hybrid matcher: similarity primary + vision variant/stamp tiebreak +
- * needsConfirmation (+ confirmationReason). The pokemontcg.io text matcher is
+ * the hybrid matcher: vision name primary (identity veto), artwork similarity
+ * second, variant/stamp tiebreak + needsConfirmation (+ confirmationReason).
+ * The pokemontcg.io text matcher is
  * used only as a fallback when the embedding table is empty/unavailable (or no
  * embedding deps are supplied — the pre-T23.2 behavior).
  *

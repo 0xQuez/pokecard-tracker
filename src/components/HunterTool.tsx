@@ -706,7 +706,7 @@ function SearchTab() {
                   eBay Sold Range
                 </div>
                 <div className="big amount">
-                  ${selectedCard.consolidated.ebaySoldRange.low.toFixed(2)} –
+                  ${selectedCard.consolidated.ebaySoldRange.low.toFixed(2)} to
                   ${selectedCard.consolidated.ebaySoldRange.high.toFixed(2)}
                 </div>
               </>
@@ -722,7 +722,7 @@ function SearchTab() {
                   No prices found
                 </div>
                 <div className="big amount" style={{ opacity: 0.4 }}>
-                  $—
+                  —
                 </div>
               </>
             )}

@@ -304,7 +304,7 @@ export async function resolveCardIdentity(query: string, catalog: CardCatalog): 
     const healthMsg = catalog.health?.()?.message;
     warnings.push(
       degraded
-        ? `catalog unavailable (${healthMsg}); try again before trusting a zero-match — the card may still exist`
+        ? `catalog unavailable (${healthMsg}); try again before trusting a zero-match, the card may still exist`
         : "no catalog match; verify the card name/set before any price lookup"
     );
     return {

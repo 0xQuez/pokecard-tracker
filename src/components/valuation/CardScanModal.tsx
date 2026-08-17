@@ -206,7 +206,7 @@ export default function CardScanModal({
         {mode === "upload" && (
           <>
             <p style={{ fontSize: 13, color: "var(--text-mid)", margin: "0 0 12px" }}>
-              No camera detected — upload a photo of the card instead.
+              No camera detected. Upload a photo of the card instead.
             </p>
             <label
               className="cta"

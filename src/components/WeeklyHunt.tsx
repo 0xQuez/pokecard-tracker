@@ -76,7 +76,7 @@ export default function WeeklyHunt() {
         <p style={{ fontWeight: 600, color: "var(--ink)", marginBottom: 4 }}>Weekly Hunt</p>
         <p style={{ color: "var(--text-mid)", fontSize: 14 }}>
           {!tableReady
-            ? `No hunt data available yet — next run: ${nextRun}`
+            ? `No hunt data available yet. Next run: ${nextRun}`
             : "Runs every Wednesday at 9am. Check back then for this week's curated picks."}
         </p>
       </div>
@@ -98,7 +98,7 @@ export default function WeeklyHunt() {
             {picks.length} card{picks.length > 1 ? "s" : ""} cleared the 2× margin filter.
             {picks.length > 0 && (
               <span>
-                {" "}Best pick: <strong>{picks[0].card_name}</strong> – {picks[0].margin.toFixed(1)}x margin.
+                {" "}Best pick: <strong>{picks[0].card_name}</strong> at {picks[0].margin.toFixed(1)}x margin.
               </span>
             )}
           </div>
@@ -168,7 +168,7 @@ export default function WeeklyHunt() {
         paddingTop: 6,
         paddingRight: 4,
       }}>
-        Week of {rows[0]?.week_start_date} — {top.length} cards researched
+        Week of {rows[0]?.week_start_date} · {top.length} cards researched
       </div>
     </div>
   );

@@ -36,10 +36,6 @@
   --gold: #E3C77C;            /* grading accent */
   --bg: var(--bg-0);
 
-  --grad-hero: radial-gradient(120% 140% at 20% 0%, #1B2A1D 0%, #121A13 45%, #0E1410 100%);
-  --grad-sage: linear-gradient(135deg, #A6C49B 0%, #7FA176 100%);
-  --grad-sand: linear-gradient(135deg, #E2D3AE 0%, #C9B585 100%);
-
   /* --- Type --- */
   --font-ui: 'Inter', system-ui, sans-serif;
   --font-display: 'Fraunces', Georgia, serif;
@@ -127,7 +123,7 @@ input {
   width: 34px;
   height: 34px;
   border-radius: 11px;
-  background: var(--grad-sage);
+  background: var(--sage);
   display: grid;
   place-items: center;
   color: #0E1410;
@@ -322,7 +318,7 @@ input {
   width: 52px;
   height: 52px;
   border-radius: 50%;
-  background: var(--grad-sage);
+  background: var(--sage);
   color: #0E1410;
   display: grid;
   place-items: center;
@@ -502,14 +498,6 @@ input {
   overflow: hidden;
 }
 
-.hero::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(60% 50% at 80% -10%, rgba(166, 196, 155, .06), transparent 70%);
-}
-
 .hero .label {
   font-size: 12px;
   font-weight: 600;
@@ -550,13 +538,13 @@ input {
 }
 
 .splitbar .f1 {
-  background: var(--grad-sage);
+  background: var(--sage);
   border-radius: 999px 0 0 999px;
   width: 50%;
 }
 
 .splitbar .f2 {
-  background: var(--grad-sand);
+  background: var(--sand);
   border-radius: 0 999px 999px 0;
   width: 50%;
 }

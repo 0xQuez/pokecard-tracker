@@ -107,7 +107,7 @@ export default function Home({ cards, currentUser, onEdit, onMarkSold }: Props) 
     <div className="page">
       <div className="desk-grid">
         <div>
-          <div className="hero settle-hero" style={{ padding: "34px 24px", textAlign: "center", background: "var(--grad-hero)", borderRadius: "var(--r-xl)" }}>
+          <div className="hero settle-hero" style={{ padding: "34px 24px", textAlign: "center", borderRadius: "var(--r-xl)" }}>
             <div className="label" style={{ fontSize: 13, color: "var(--text-low)", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".08em" }}>Who owes what</div>
             <div className="settle-flow" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 8 }}>
               <div className="avatar u2" style={{ width: 40, height: 40, fontSize: 18 }}>{otherUserCapitalized[0]}</div>

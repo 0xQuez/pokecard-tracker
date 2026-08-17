@@ -101,7 +101,7 @@ export default function Settle({ cards, currentUser, onSettle, onRefresh }: Prop
           {breakdown.owesDirection === "even"
             ? "You're perfectly balanced"
             : allSettled
-            ? "Cycle complete — start fresh"
+            ? "Cycle complete. Start fresh"
             : "to even out this cycle"}
         </div>
       </div>

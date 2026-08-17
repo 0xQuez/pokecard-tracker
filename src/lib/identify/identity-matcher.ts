@@ -155,7 +155,7 @@ export function applyStampTiebreak(
     // It's the same catalog record, but the collector variant is the valuable
     // one — surface it first with a tie-breaking confidence bump.
     confidence: Math.min(1, base.confidence + 0.1),
-    reason: `Pokemon Center stamp detected on photo — this is the PC Exclusive print of ${base.name} (svp-44), a different product from the regular print.`,
+    reason: `Pokemon Center stamp detected on photo. This is the PC Exclusive print of ${base.name} (svp-44), a different product from the regular print.`,
     synthetic: true,
   };
   return [pc, base];
@@ -190,7 +190,7 @@ export async function matchCardIdentity(
   if (cards.length === 0) {
     const degraded = catalog.health?.()?.degraded ?? false;
     warning = degraded
-      ? `catalog unavailable (${catalog.health?.()?.message}); card may still exist — retry`
+      ? `catalog unavailable (${catalog.health?.()?.message}); card may still exist. Retry`
       : "no catalog match for the card read from the photo";
     return { candidates: [], needsConfirmation: true, warning };
   }

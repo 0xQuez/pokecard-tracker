@@ -147,7 +147,7 @@ export default function Add({ onAdd, currentUser }: Props) {
       if (path) {
         cardData.image_url = path;
       } else {
-        alert("Card image couldn't be uploaded. The entry will be saved without it — you can add it later in Edit.");
+        alert("Card image couldn't be uploaded. The entry will be saved without it. You can add it later in Edit.");
       }
     }
 

@@ -176,7 +176,7 @@ export async function uploadCardImage(
       ok: false,
       error: new CardImageUploadError(
         "oversize",
-        `Image is ${mb} MB — the maximum is 10 MB.`,
+        `Image is ${mb} MB. The maximum is 10 MB.`,
         `file size ${file.size} exceeds ${MAX_CARD_IMAGE_BYTES}`
       ),
     };

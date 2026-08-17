@@ -202,7 +202,7 @@ export interface StatusMeta {
 export function statusMeta(status: ValuationStatus, error: string | null): StatusMeta {
   switch (status) {
     case "pending":
-      return { label: "Queued — waiting for a worker", tone: "pending", spinner: true };
+      return { label: "Queued, waiting for a worker", tone: "pending", spinner: true };
     case "claimed":
     case "running":
       return { label: "Researching prices…", tone: "running", spinner: true };
@@ -212,7 +212,7 @@ export function statusMeta(status: ValuationStatus, error: string | null): Statu
       return { label: error || "Valuation failed", tone: "failed", spinner: false };
     case "blocked":
       return {
-        label: error || "Needs attention — ambiguous identity",
+        label: error || "Needs attention, ambiguous identity",
         tone: "blocked",
         spinner: false,
       };
@@ -293,7 +293,7 @@ export async function queueValuation(
       request: recent.request,
       requestId: recent.request.id,
       result: recent.result,
-      message: "A recent valuation already exists — showing it instead.",
+      message: "A recent valuation already exists, showing it instead.",
     };
   }
 
@@ -317,7 +317,7 @@ export async function queueValuation(
     kind: "queued",
     request,
     requestId: request.id,
-    message: "Valuation queued — you'll be notified",
+    message: "Valuation queued, you'll be notified",
   };
 }
 

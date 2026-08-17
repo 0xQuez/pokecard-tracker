@@ -109,7 +109,7 @@ export default function Page() {
 
   const handleAddCard = () => {
     fetchCards();
-    showToast("✓ Added — split 50/50");
+    showToast("✓ Added, split 50/50");
     goToScreen("home");
   };
 
@@ -148,7 +148,7 @@ export default function Page() {
   };
 
   const handleSettle = () => {
-    showToast("✓ Settled — starting fresh");
+    showToast("✓ Settled, starting fresh");
   };
 
   const handleRefresh = () => {

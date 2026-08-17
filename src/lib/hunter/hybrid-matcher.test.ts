@@ -225,6 +225,46 @@ test("identity gating: no candidate matches the vision name -> pure art similari
   assert.ok(Math.abs(out.ranked[0].finalScore - 0.95) < 1e-9);
 });
 
+// ── T26.5 regression: identity tier is a TRUE veto ──────────────────────────
+
+test("REGRESSION T26.5: very-low-sim correct-name beats perfect-sim wrong-name", () => {
+  // The review counterexample: with only an additive boost (sim 1.0 wrong-name
+  // scoring 0.8 vs sim 0.5 correct-name scoring 0.6) artwork dominates. The
+  // identity TIER must guarantee the correct-name candidate wins regardless of
+  // how weak its art similarity is relative to a mismatched impostor.
+  const out = hybridMatch(
+    [
+      cand({ id: "impostor", name: "Different Card", similarity: 1.0 }),
+      cand({ id: "svp-44", name: "Charmander", similarity: 0.05 }),
+    ],
+    identity({ name: "Charmander", stamp: null }),
+  );
+  assert.equal(out.ranked[0].candidate.id, "svp-44");
+  assert.equal(out.ranked[0].nameMatched, true);
+  assert.equal(out.ranked[1].candidate.id, "impostor");
+  assert.equal(out.ranked[1].nameMatched, false);
+});
+
+test("REGRESSION T26.5: set/number mismatch cannot defeat an exact name match", () => {
+  // A name-matching candidate whose set/number does NOT match the vision
+  // reading must still outrank every mismatched-name candidate, even one with
+  // a near-perfect art similarity. Set/number only refines WITHIN the matching
+  // tier; it can never demote an exact identity match below an impostor.
+  const out = hybridMatch(
+    [
+      cand({ id: "base1-46", name: "Charmander", number: "46", setId: "base1", similarity: 0.5 }),
+      cand({ id: "impostor", name: "Different Card", number: "44", setId: "svp", similarity: 1.0 }),
+    ],
+    identity({ name: "Charmander", collectorNumber: "44", setCode: "SVP", stamp: null }),
+  );
+  assert.equal(out.ranked[0].candidate.id, "base1-46");
+  assert.equal(out.ranked[0].nameMatched, true);
+  // The impostor matches the set/number the vision read, but its NAME does not
+  // match — identity (name) is the veto, so it stays down-ranked.
+  assert.equal(out.ranked[0].candidate.number, "46");
+  assert.equal(out.ranked[1].candidate.id, "impostor");
+});
+
 test("set/number confirmation picks the right set among same-name candidates", () => {
   // Two same-name Charmanders; the lower-similarity one is the right SET/number
   // per the vision reading, so it should rank first.

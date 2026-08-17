@@ -1,6 +1,7 @@
 /**
- * hybrid-matcher.ts — Fuse embedding similarity (primary) with vision-extracted
- * variant/stamp features (tiebreak) into the final candidate ranking (T23.3).
+ * hybrid-matcher.ts — Re-ranks embedding candidates with vision identity FIRST
+ * (T26.1/T26.5) and artwork (embedding) similarity second, into the final
+ * candidate ranking (T23.3).
  *
  * WHY THIS MODULE EXISTS
  * ----------------------
@@ -11,9 +12,17 @@
  * final ranking step that turns those embedding candidates into the ranked
  * list the UI shows:
  *
- *   base score    = embedding similarity (DOMINANT term)
- *   + name bonus  = small, vision name == candidate name (embeddings already
- *                   cover identity, so this only nudges, never dominates)
+ *   identity tier = vision name is the PRIMARY signal. When the vision name is
+ *                   usable and matches a candidate, every name-matching
+ *                   candidate outranks every mismatched-name candidate
+ *                   (a true veto — the tier is decided before any score is
+ *                   compared, so artwork can never dominate an identity match).
+ *   base score    = embedding similarity, which ranks candidates *within*
+ *                   their identity tier (it is NOT the dominant term overall).
+ *   name bonus    = applied to the score after the tier is decided, so the
+ *                   exposed finalScore still reflects the identity match.
+ *   set/number    = small bonus refining WHICH same-name set/number is right;
+ *                   a set/number mismatch can never defeat an exact name match.
  *   tiebreak      = when the top candidates share the same art (similarity
  *                   within SAME_ART_SIMILARITY_WINDOW), prefer the candidate
  *                   whose variant/stamp metadata matches the vision reading;
@@ -48,17 +57,20 @@ import type { CardIdentity } from "./vision-identify.ts";
 
 /**
  * Weight given to artwork (embedding) similarity within a candidate's score.
- * The remaining headroom is reserved for identity, so a name-matching candidate
- * can decisively outrank a same-art impostor without the score blowing past
- * 1.0. Artwork still ranks candidates *within* a matching identity group.
+ * Artwork ranks candidates *within* their identity tier; the veto that keeps a
+ * matching name ahead of every mismatched-name candidate is the identity tier
+ * in the sort, not this weight. Keeping it below 1.0 leaves headroom for the
+ * identity boost so a matching candidate's exposed finalScore reflects the
+ * match without blowing past 1.0.
  */
 export const SIM_WEIGHT = 0.8;
 /**
  * Flat score added to a candidate whose name matches the vision reading, when
- * the vision name is usable and at least one candidate matches. This is the
- * T26.1 identity-first mechanism: it dominates the art-similarity gap between a
- * true match and a same-art different-name impostor, so the vision NAME can
- * actually correct the artwork ranking (previously only a 0.02 nudge).
+ * the vision name is usable and at least one candidate matches. The veto that
+ * keeps a name match ahead of every mismatched-name candidate is the identity
+ * TIER in the sort (decided before any score is compared); this boost is what
+ * the exposed finalScore reflects on top of that, so a matching candidate also
+ * visibly scores higher than a same-tier-missing impostor.
  */
 export const IDENTITY_BOOST = 0.2;
 /**
@@ -87,10 +99,10 @@ export const CONFIRMATION_FINAL_MARGIN = 0.02;
 
 /** Human-facing reason attached to needsConfirmation for a stamp/variant tie. */
 export const SAME_ART_VARIANT_REASON =
-  "same-art variants differ (stamp/holo) — user must confirm";
+  "same-art variants differ (stamp/holo), user must confirm";
 /** Human-facing reason for a plain near-miss between the top two candidates. */
 export const CLOSE_MATCH_REASON =
-  "top-2 matches are too close to auto-resolve — user must confirm";
+  "top-2 matches are too close to auto-resolve, user must confirm";
 
 // ── Public input / output types ─────────────────────────────────────────────
 
@@ -316,13 +328,25 @@ export function hybridMatch(
     r.finalScore = s;
   }
 
-  // 3. Rank by finalScore desc (similarity desc tiebreak). With identity baked
-  //    into the score, a name-matching candidate outranks any same-art impostor.
-  scored.sort((a, b) => {
+  // 3. Rank by identity tier first, then by composite score. When identity
+  //    gating is active, a name-matching candidate ALWAYS outranks a
+  //    non-matching one (the T26.5 identity veto) — no amount of artwork
+  //    similarity lets a mismatched-name impostor dominate a usable vision
+  //    match, because the tier is decided before any score is compared.
+  //    Artwork similarity then ranks candidates *within* their tier, where
+  //    the stamp/variant tiebreak still resolves same-name prints.
+  const compareRanked = (
+    a: HybridRankedCandidate,
+    b: HybridRankedCandidate,
+  ): number => {
+    if (gated && a.nameMatched !== b.nameMatched) {
+      return a.nameMatched ? -1 : 1;
+    }
     const d = b.finalScore - a.finalScore;
     if (d !== 0) return d;
     return b.candidate.similarity - a.candidate.similarity;
-  });
+  };
+  scored.sort(compareRanked);
 
   const ranked: HybridRankedCandidate[] = scored;
   let needsConfirmation = false;
@@ -355,12 +379,10 @@ export function hybridMatch(
             r.finalScore += variantBonus;
             r.variantMatch = true;
           }
-          // Re-rank so the physically-matching candidate rises to the top.
-          ranked.sort((a, b) => {
-            const d = b.finalScore - a.finalScore;
-            if (d !== 0) return d;
-            return b.candidate.similarity - a.candidate.similarity;
-          });
+          // Re-rank so the physically-matching candidate rises to the top
+          // (tier-aware: a variant boost must not lift a mismatched-name
+          // candidate above the matching tier).
+          ranked.sort(compareRanked);
         }
         // A stamp/variant tie was detected — always confirm, whether or not we
         // could break it. Card identity is sacred.

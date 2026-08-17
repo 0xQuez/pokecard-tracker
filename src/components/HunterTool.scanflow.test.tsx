@@ -159,7 +159,7 @@ describe("HunterTool scan flow wiring (T22.7)", () => {
   it("shows a retry path when the upload fails", async () => {
     uploadCardImageToBucket.mockResolvedValue({
       ok: false,
-      error: new Error("Image is 12.0 MB — the maximum is 10 MB."),
+      error: new Error("Image is 12.0 MB. The maximum is 10 MB."),
     });
 
     await captureCard();
