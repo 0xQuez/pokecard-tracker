@@ -17,13 +17,43 @@ import {
 } from "@/lib/scan-flow";
 import type { CardPriceResult, CardIdentity, CardRarity, CardCondition, CardEdition, GradeLevel } from "@/lib/models";
 
+type FilterKey = "rarity" | "condition" | "edition" | "graded";
+
+/** Single labeled filter group; taps toggle a chip on/off. */
+function FilterGroup({
+  label,
+  options,
+  value,
+  onToggle,
+}: {
+  label: string;
+  options: readonly string[];
+  value: string | null;
+  onToggle: (option: string) => void;
+}) {
+  return (
+    <div className="filter-group">
+      <span className="filter-label">{label}</span>
+      {options.map((option) => (
+        <button
+          key={option}
+          className={`chip${value === option ? " on" : ""}`}
+          onClick={() => onToggle(option)}
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function HunterTool({ guest = false }: { guest?: boolean }) {
   const [activeTab, setActiveTab] = useState<"search" | "weekly">("search");
   return (
     <div className="page page-narrow">
       <div className="topbar">
         <div className="hello">
-          {guest ? "Card Hunter" : "HunterTool"}
+          Card Hunter
           <b>Find cards worth buying &amp; grading</b>
         </div>
         {!guest && (
@@ -38,40 +68,24 @@ export default function HunterTool({ guest = false }: { guest?: boolean }) {
       <div style={{ display: "flex", gap: 8, marginTop: 12, marginBottom: 4 }}>
         <button
           onClick={() => setActiveTab("search")}
-          style={{
-            flex: 1,
-            padding: "10px 0",
-            borderRadius: 8,
-            border: "1px solid",
-            borderColor: activeTab === "search" ? "var(--ink)" : "var(--border)",
-            background: activeTab === "search" ? "var(--ink)" : "transparent",
-            color: activeTab === "search" ? "#fff" : "var(--text-mid)",
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: "pointer",
-            transition: "all 0.15s ease",
-          }}
+          className={`hunter-tab${activeTab === "search" ? " on" : ""}`}
         >
-          🔍 Search &amp; Calc
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+          Search &amp; price
         </button>
         {!guest && (
           <button
             onClick={() => setActiveTab("weekly")}
-            style={{
-              flex: 1,
-              padding: "10px 0",
-              borderRadius: 8,
-              border: "1px solid",
-              borderColor: activeTab === "weekly" ? "var(--ink)" : "var(--border)",
-              background: activeTab === "weekly" ? "var(--ink)" : "transparent",
-              color: activeTab === "weekly" ? "#fff" : "var(--text-mid)",
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: "pointer",
-              transition: "all 0.15s ease",
-            }}
+            className={`hunter-tab${activeTab === "weekly" ? " on" : ""}`}
           >
-            🎯 Weekly Hunt
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+            Weekly hunt
           </button>
         )}
       </div>
@@ -127,8 +141,6 @@ function SearchTab() {
     "4th print",
   ];
   const GRADES: GradeLevel[] = ["PSA 6", "PSA 7", "PSA 8", "PSA 9", "PSA 10"];
-
-  type FilterKey = "rarity" | "condition" | "edition" | "graded";
 
   const [filters, setFilters] = useState<Record<FilterKey, string | null>>({
     rarity: null,
@@ -359,145 +371,44 @@ function SearchTab() {
   return (
     <>
       <div style={{ marginTop: 16 }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
-          <div className="field" style={{ flex: 1 }}>
-            <input
-              className="text-input"
-              type="text"
-              placeholder='e.g. "charizard 4/102"'
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              style={{ fontSize: 16, padding: "14px 16px" }}
-            />
-          </div>
+        <div className="search-row">
+          <input
+            className="text-input search-input"
+            type="text"
+            placeholder='e.g. "charizard 4/102"'
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+            style={{ fontSize: 16, padding: "14px 16px" }}
+          />
           <CardScanner onCapture={handleScanned} />
         </div>
 
         {/* Filter chips */}
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 6,
-            marginBottom: 12,
-          }}
-        >
-          {RARITIES.map((r) => (
-            <button
-              key={r}
-              onClick={() =>
-                setFilter("rarity", filters.rarity === r ? null : r)
-              }
-              style={{
-                padding: "4px 10px",
-                borderRadius: 999,
-                border: "1px solid",
-                borderColor: filters.rarity === r ? "var(--clay)" : "var(--border)",
-                background: filters.rarity === r ? "var(--clay)" : "transparent",
-                color: filters.rarity === r ? "#fff" : "var(--text-mid)",
-                fontSize: 12,
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 6,
-            marginBottom: 12,
-          }}
-        >
-          {CONDITIONS.map((c) => (
-            <button
-              key={c}
-              onClick={() =>
-                setFilter("condition", filters.condition === c ? null : c)
-              }
-              style={{
-                padding: "4px 10px",
-                borderRadius: 999,
-                border: "1px solid",
-                borderColor: filters.condition === c ? "var(--sage)" : "var(--border)",
-                background: filters.condition === c ? "var(--sage)" : "transparent",
-                color: filters.condition === c ? "#fff" : "var(--text-mid)",
-                fontSize: 12,
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
-            >
-              {c}
-            </button>
-          ))}
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 6,
-            marginBottom: 12,
-          }}
-        >
-          {EDITIONS.map((e) => (
-            <button
-              key={e}
-              onClick={() =>
-                setFilter("edition", filters.edition === e ? null : e)
-              }
-              style={{
-                padding: "4px 10px",
-                borderRadius: 999,
-                border: "1px solid",
-                borderColor: filters.edition === e ? "var(--ink)" : "var(--border)",
-                background: filters.edition === e ? "var(--ink)" : "transparent",
-                color: filters.edition === e ? "#fff" : "var(--text-mid)",
-                fontSize: 12,
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
-            >
-              {e}
-            </button>
-          ))}
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 6,
-            marginBottom: 12,
-          }}
-        >
-          {GRADES.map((g) => (
-            <button
-              key={g}
-              onClick={() =>
-                setFilter("graded", filters.graded === g ? null : g)
-              }
-              style={{
-                padding: "4px 10px",
-                borderRadius: 999,
-                border: "1px solid",
-                borderColor: filters.graded === g ? "var(--gold)" : "var(--border)",
-                background: filters.graded === g ? "var(--gold)" : "transparent",
-                color: filters.graded === g ? "#fff" : "var(--text-mid)",
-                fontSize: 12,
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
-            >
-              {g}
-            </button>
-          ))}
-        </div>
+        <FilterGroup
+          label="Rarity"
+          options={RARITIES}
+          value={filters.rarity}
+          onToggle={(v) => setFilter("rarity", v)}
+        />
+        <FilterGroup
+          label="Condition"
+          options={CONDITIONS}
+          value={filters.condition}
+          onToggle={(v) => setFilter("condition", v)}
+        />
+        <FilterGroup
+          label="Edition"
+          options={EDITIONS}
+          value={filters.edition}
+          onToggle={(v) => setFilter("edition", v)}
+        />
+        <FilterGroup
+          label="Grade"
+          options={GRADES}
+          value={filters.graded}
+          onToggle={(v) => setFilter("graded", v)}
+        />
 
         <button
           className="cta"
@@ -599,7 +510,7 @@ function SearchTab() {
             onSelect={(c) => void confirmIdentity(c)}
             onCancel={cancelScanConfirm}
             title="Which card is this?"
-            note="The scanner found a few possible prints — prices vary a lot between them."
+            note="The scanner found a few possible prints. Prices vary a lot between them."
           />
         </div>
       )}
@@ -859,7 +770,7 @@ function SearchTab() {
                   </span>
                 </div>
                 <div className="break-row">
-                  <span className="l">Bay Median (sold)</span>
+                  <span className="l">eBay median (sold)</span>
                   <span className="r amount">
                     ${selectedCard.consolidated.ebaySoldRange.median.toFixed(2)}
                   </span>

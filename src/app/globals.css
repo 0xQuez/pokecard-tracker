@@ -494,7 +494,7 @@ input {
 
 /* ============ HOME ============ */
 .hero {
-  background: var(--grad-hero);
+  background: var(--surface-1);
   border: 1px solid var(--line);
   border-radius: var(--r-xl);
   padding: 28px 24px 24px;
@@ -507,7 +507,7 @@ input {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(60% 50% at 80% -10%, rgba(166, 196, 155, .10), transparent 70%);
+  background: radial-gradient(60% 50% at 80% -10%, rgba(166, 196, 155, .06), transparent 70%);
 }
 
 .hero .label {
@@ -845,7 +845,7 @@ input {
   margin: 6px 20px 22px;
   padding: 17px;
   border-radius: var(--r-md);
-  background: var(--grad-sage);
+  background: var(--sage);
   color: #0E1410;
   font-size: 15px;
   font-weight: 700;
@@ -888,7 +888,7 @@ input {
 .settle-hero {
   padding: 34px 24px;
   text-align: center;
-  background: var(--grad-hero);
+  background: var(--surface-1);
   border-radius: var(--r-xl);
   border: 1px solid var(--line);
   position: relative;
@@ -1470,6 +1470,73 @@ input {
 }
 
 /* ============ UTILITY ============ */
+.hunter-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 0;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-mid);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease);
+}
+
+.hunter-tab svg {
+  width: 18px;
+  height: 18px;
+}
+
+.hunter-tab:hover {
+  border-color: var(--line-strong);
+  color: var(--text-hi);
+}
+
+.hunter-tab.on {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+  color: var(--sage-bright);
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.filter-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-low);
+  margin-right: 4px;
+}
+
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 520px) {
+  .search-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

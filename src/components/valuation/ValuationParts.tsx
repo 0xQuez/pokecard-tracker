@@ -645,7 +645,7 @@ export function VendorValuationView({
         background: "var(--bg-0)",
       }}
     >
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--text-low)", marginBottom: 12 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-mid)", marginBottom: 12 }}>
         Estimated market value
       </div>
 

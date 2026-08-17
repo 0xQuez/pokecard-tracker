@@ -81,7 +81,7 @@ export default function CandidatePicker({
         data-empty="true"
         style={{ padding: "16px 4px", color: "var(--text-mid)", fontSize: 13 }}
       >
-        No confident match — try a clearer photo, then rescan.
+        No confident match. Try a clearer photo, then rescan.
       </div>
     );
   }
@@ -95,7 +95,7 @@ export default function CandidatePicker({
         )}
         <div style={{ fontSize: 11, color: "var(--text-low)", marginTop: 4 }}>
           {ranked.length > 1
-            ? "Tap the card you scanned — prices vary by print."
+            ? "Tap the card you scanned. Prices vary by print."
             : "Tap to confirm this card."}
         </div>
       </div>
@@ -186,14 +186,12 @@ export default function CandidatePicker({
                       data-testid="best-match"
                       style={{
                         flexShrink: 0,
-                        fontSize: 9,
-                        fontWeight: 800,
-                        textTransform: "uppercase",
-                        letterSpacing: 0.4,
-                        color: "#fff",
-                        background: "var(--sage)",
-                        borderRadius: 999,
-                        padding: "2px 7px",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: "var(--sage-bright)",
+                        background: "transparent",
+                        textTransform: "none",
+                        letterSpacing: 0,
                       }}
                     >
                       Best match

@@ -59,7 +59,7 @@ export default function CardScanner({
       navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);
     if (!gum) {
       setPhase("fallback");
-      setError("No camera detected — upload a photo instead.");
+      setError("No camera detected. Upload a photo instead.");
       return;
     }
     try {
@@ -70,7 +70,7 @@ export default function CardScanner({
       setError(
         isPermissionError(err)
           ? "Camera permission was denied. Upload a photo instead."
-          : "No camera detected — upload a photo instead."
+          : "No camera detected. Upload a photo instead."
       );
       setPhase("fallback");
     }
@@ -267,7 +267,7 @@ export default function CardScanner({
           {phase === "fallback" && (
             <>
               <p style={{ fontSize: 13, color: "var(--text-mid)", margin: "0 0 12px" }}>
-                {error || "No camera detected — upload a photo instead."}
+                {error || "No camera detected. Upload a photo instead."}
               </p>
               <label
                 className="cta"

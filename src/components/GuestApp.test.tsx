@@ -39,7 +39,7 @@ describe("GuestApp guest session surface", () => {
     render(<GuestApp onLogout={vi.fn()} />);
     // Hunter tool is present.
     expect(screen.getByText("Find cards worth buying & grading")).toBeTruthy();
-    expect(screen.getByText(/Search & Calc/i)).toBeTruthy();
+    expect(screen.getByText(/Search & price/i)).toBeTruthy();
   });
 
   it("does not render any financial or owner tab", () => {
