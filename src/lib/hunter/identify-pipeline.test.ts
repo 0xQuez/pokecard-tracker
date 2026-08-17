@@ -339,6 +339,42 @@ test("pipeline (embedding): svp-44 photo returns svp-44 rank 1 by similarity", a
   assert.equal(out.candidates[0].id, "svp-44");
 });
 
+test("pipeline (embedding): artwork-misleading — vision attributes correct the ranking", async () => {
+  // Same/similar art, different set: the impostor's art similarity is HIGHER
+  // than the true card's, so a pure artwork ranking would pick it. The vision
+  // reading (name + set + number) must correct the ranking to the true card.
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/det1/4.png", {
+    visionFn: visionReturning(charmanderPlain), // name "Charmander", num 44, set SVP
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => [
+        // Wrong card, but more art-similar to the photo.
+        embCand({
+          cardId: "det1-4",
+          name: "Detective Pikachu's Charmander",
+          setId: "det1",
+          setName: "Detective Pikachu",
+          number: "4",
+          similarity: 0.95,
+        }),
+        // True card, slightly lower art similarity.
+        embCand({ cardId: "svp-44", name: "Charmander", number: "44", similarity: 0.9 }),
+      ],
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  // The vision identity corrected the artwork ranking.
+  assert.equal(out.candidates[0].id, "svp-44");
+  assert.equal(out.candidates[0].name, "Charmander");
+  // Clear identity winner -> no spurious confirmation from the impostor's art sim.
+  assert.equal(out.needsConfirmation, false);
+  assert.equal(out.confirmationReason, null);
+  // Unambiguous -> trimmed to the single clear match (auto-advance path).
+  assert.equal(out.candidates.length, CLEAR_CANDIDATE_LIMIT);
+});
+
 test("pipeline (embedding): empty table falls back to text matcher", async () => {
   let textMatchRan = false;
   const out = await runIdentifyPipeline("https://img/x.png", {

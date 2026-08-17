@@ -342,15 +342,16 @@ export interface HybridTiebreakResult {
 }
 
 /**
- * Fuse the T23.2 embedding-similarity ranking (primary) with the vision
- * variant/stamp tiebreak (T23.3) into the final candidate list.
+ * Fuse the T23.2 embedding-similarity ranking with the T26.1 identity-first
+ * re-ranking into the final candidate list.
  *
- * The embedding candidates have no per-row stamp/variant metadata (the catalog
- * keeps svp-44 as ONE record), so the hybrid matcher's "vision saw a stamp but
- * no candidate metadata distinguishes it" branch fires whenever the vision
- * model reads a pricing stamp on a same-art tie — the candidates stay grouped
- * together and needsConfirmation is set so the user picks the actual print.
- * See hybrid-matcher.ts for the full scoring rules.
+ * The hybrid matcher now makes the vision NAME the primary ranking signal and
+ * uses artwork similarity to rank WITHIN the matching tier. `number` and `setId`
+ * flow through so a name match can be refined by the set/number the vision read.
+ * The composite `finalScore` (which may exceed 1.0 from the identity boost) is
+ * clamped to 0..1 for the UI contract; ordering is preserved because clamping
+ * is monotonic and equal clamped values fall back to the matcher's similarity
+ * tiebreak. needsConfirmation/confirmationReason come straight from the matcher.
  */
 export function applyHybridTiebreak(
   embeddingCandidates: IdentifyCandidate[],
@@ -365,6 +366,9 @@ export function applyHybridTiebreak(
     // the tiebreak directly against hybrid-matcher.hybridMatch.
     variant: null,
     stamp: null,
+    // Set/number flow through for the T26.1 set/number confirmation.
+    number: c.number || null,
+    setId: c.set?.id || null,
   }));
 
   const result = hybridMatch(inputs, identity);
@@ -372,10 +376,15 @@ export function applyHybridTiebreak(
     result.ranked.map((r) => [r.candidate.id, r.finalScore]),
   );
   // Re-rank the original IdentifyCandidates to match the hybrid order, carrying
-  // the final composite score forward.
-  const ranked = embeddingCandidates
-    .map((c) => ({ ...c, score: scoreById.get(c.id) ?? c.score }))
-    .sort((a, b) => b.score - a.score);
+  // the final composite score forward (clamped to 0..1 for the UI).
+  const byId = new Map(embeddingCandidates.map((c) => [c.id, c]));
+  const ranked = result.ranked
+    .map((r) => byId.get(r.candidate.id))
+    .filter((c): c is IdentifyCandidate => Boolean(c))
+    .map((c) => {
+      const raw = scoreById.get(c.id) ?? c.score;
+      return { ...c, score: Math.max(0, Math.min(1, raw)) };
+    });
 
   return {
     candidates: ranked,

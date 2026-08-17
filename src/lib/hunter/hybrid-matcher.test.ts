@@ -7,6 +7,7 @@ import {
   hybridMatch,
   metadataMatchesVision,
   normalizeName,
+  normalizeCollectorNumber,
   stampCategory,
   visionHasStamp,
   SAME_ART_VARIANT_REASON,
@@ -166,10 +167,12 @@ test("ACCEPTANCE: clear-cut (distinct art, high top-1) -> no confirmation", () =
   assert.ok(out.ranked[0].finalScore - out.ranked[1].finalScore > 0.02);
 });
 
-// ── name bonus ──────────────────────────────────────────────────────────────
+// ── identity-first (T26.1) ────────────────────────────────────────────────
 
-test("name bonus: vision name match nudges, does not override similarity", () => {
-  // Two distinct-art candidates, same sim; only one has a matching name.
+test("identity-first: name match now dominates an equal-similarity impostor", () => {
+  // Two distinct-art candidates with the SAME similarity; only one has a name
+  // matching the vision. The matching candidate outranks the other — the T26.1
+  // flip (previously the name was a 0.02 nudge; now it is the primary signal).
   const out = hybridMatch(
     [
       cand({ id: "other", name: "Different Card", similarity: 0.9 }),
@@ -177,11 +180,71 @@ test("name bonus: vision name match nudges, does not override similarity", () =>
     ],
     identity({ stamp: null, name: "Charmander" }),
   );
-  // svp-44 got the name bonus, so it ranks first.
   assert.equal(out.ranked[0].candidate.id, "svp-44");
   assert.equal(out.ranked[0].nameMatched, true);
   assert.equal(out.ranked[1].nameMatched, false);
-  assert.ok(Math.abs(out.ranked[0].finalScore - out.ranked[1].finalScore - 0.02) < 1e-9);
+  // svp-44: 0.9*0.8 + IDENTITY_BOOST(0.2) = 0.92; impostor: 0.9*0.8 = 0.72.
+  assert.ok(Math.abs(out.ranked[0].finalScore - out.ranked[1].finalScore - 0.2) < 1e-9);
+});
+
+test("identity-first: higher-similarity same-art impostor is outranked by the name match", () => {
+  // The artwork-misleading shape: the wrong card's art is MORE similar to the
+  // photo, but its name does not match what the vision read. The name-matching
+  // card must still win.
+  const out = hybridMatch(
+    [
+      cand({
+        id: "det1-4",
+        name: "Detective Pikachu's Charmander",
+        similarity: 0.95,
+      }),
+      cand({ id: "svp-44", name: "Charmander", similarity: 0.9 }),
+    ],
+    identity({ stamp: null, name: "Charmander" }),
+  );
+  assert.equal(out.ranked[0].candidate.id, "svp-44");
+  assert.equal(out.ranked[0].nameMatched, true);
+  // The impostor stays available (top-20 contract) but is down-ranked.
+  assert.equal(out.ranked[1].candidate.id, "det1-4");
+  // Clear identity winner -> no confirmation forced by the impostor's art sim.
+  assert.equal(out.needsConfirmation, false);
+  assert.equal(out.reason, null);
+});
+
+test("identity gating: no candidate matches the vision name -> pure art similarity", () => {
+  // A wrong/hallucinated name must never override a strong art match. When
+  // nothing matches, scores revert to raw similarity.
+  const out = hybridMatch(
+    [
+      cand({ id: "a", name: "Pikachu", similarity: 0.95 }),
+      cand({ id: "b", name: "Raichu", similarity: 0.9 }),
+    ],
+    identity({ name: "Charmander", stamp: null }),
+  );
+  assert.equal(out.ranked[0].candidate.id, "a");
+  assert.ok(Math.abs(out.ranked[0].finalScore - 0.95) < 1e-9);
+});
+
+test("set/number confirmation picks the right set among same-name candidates", () => {
+  // Two same-name Charmanders; the lower-similarity one is the right SET/number
+  // per the vision reading, so it should rank first.
+  const out = hybridMatch(
+    [
+      cand({ id: "base1-46", name: "Charmander", number: "46", setId: "base1", similarity: 0.9 }),
+      cand({ id: "svp-44", name: "Charmander", number: "44", setId: "svp", similarity: 0.89 }),
+    ],
+    identity({ name: "Charmander", collectorNumber: "44", setCode: "SVP", stamp: null }),
+  );
+  assert.equal(out.ranked[0].candidate.id, "svp-44");
+  assert.ok(out.ranked[0].finalScore > out.ranked[1].finalScore);
+});
+
+test("normalizeCollectorNumber: messy vision readings compare cleanly", () => {
+  assert.equal(normalizeCollectorNumber("044/SVP 44"), "44");
+  assert.equal(normalizeCollectorNumber("44"), "44");
+  assert.equal(normalizeCollectorNumber("SV1 046"), "46");
+  assert.equal(normalizeCollectorNumber(null), "");
+  assert.equal(normalizeCollectorNumber("N/A"), "");
 });
 
 // ── confirmation margin ─────────────────────────────────────────────────────

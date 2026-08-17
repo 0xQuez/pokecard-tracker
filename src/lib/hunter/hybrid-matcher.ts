@@ -46,12 +46,32 @@ import type { CardIdentity } from "./vision-identify.ts";
 
 // ── Tunable constants (commented) ───────────────────────────────────────────
 
-/** Bonus added to a candidate's score when its name matches the vision name. */
-export const NAME_MATCH_BONUS = 0.02;
+/**
+ * Weight given to artwork (embedding) similarity within a candidate's score.
+ * The remaining headroom is reserved for identity, so a name-matching candidate
+ * can decisively outrank a same-art impostor without the score blowing past
+ * 1.0. Artwork still ranks candidates *within* a matching identity group.
+ */
+export const SIM_WEIGHT = 0.8;
+/**
+ * Flat score added to a candidate whose name matches the vision reading, when
+ * the vision name is usable and at least one candidate matches. This is the
+ * T26.1 identity-first mechanism: it dominates the art-similarity gap between a
+ * true match and a same-art different-name impostor, so the vision NAME can
+ * actually correct the artwork ranking (previously only a 0.02 nudge).
+ */
+export const IDENTITY_BOOST = 0.2;
+/**
+ * Small extra score when a name-matching candidate's collector number or set
+ * code also matches the vision reading. Refines WHICH set/number is correct
+ * among same-name candidates (e.g. base1-46 vs svp-44 Charmander).
+ */
+export const SET_NUMBER_MATCH_BONUS = 0.02;
 /**
  * Bonus added to a same-art-tied candidate whose variant/stamp metadata matches
- * the vision reading. Larger than the name bonus because it's the tiebreaker —
- * it must actually break a near-equal-similarity tie, not just nudge.
+ * the vision reading. Larger than the set/number bonus because it's the
+ * tiebreaker — it must actually break a near-equal-similarity tie, not just
+ * nudge.
  */
 export const VARIANT_MATCH_BONUS = 0.05;
 /**
@@ -93,6 +113,10 @@ export interface HybridCandidateInput {
   /** Optional physical-print metadata used for the variant/stamp tiebreak. */
   variant?: string | null;
   stamp?: string | null;
+  /** Optional collector number, e.g. "44" (T26.1 set/number confirmation). */
+  number?: string | null;
+  /** Optional set code, e.g. "svp" (T26.1 set/number confirmation). */
+  setId?: string | null;
 }
 
 /** A candidate after scoring — finalScore is what ordering is based on. */
@@ -125,7 +149,8 @@ export interface HybridMatchResult {
 }
 
 export interface HybridMatchOptions {
-  nameBonus?: number;
+  simWeight?: number;
+  identityBoost?: number;
   variantBonus?: number;
   sameArtWindow?: number;
   confirmationMargin?: number;
@@ -141,6 +166,44 @@ export function normalizeName(name: string | null | undefined): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+/**
+ * Reduce a collector number to a comparable form. The vision reading is messy
+ * ("044/SVP 44", "SV1 46"), while the catalog stores the printed number ("44").
+ * We extract the trailing integer group and strip leading zeros so "044/SVP 44"
+ * -> "44", "46" -> "46", "046" -> "46". Returns "" when nothing usable.
+ */
+export function normalizeCollectorNumber(v: string | null | undefined): string {
+  if (!v) return "";
+  const m = /(\d+)\s*$/.exec(v.trim());
+  if (!m) return "";
+  return String(parseInt(m[1], 10));
+}
+
+/** Case/space-insensitive set code form, e.g. "SVP" -> "svp". */
+function normalizeSetCode(v: string | null | undefined): string {
+  if (!v) return "";
+  return v.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/**
+ * Does a candidate's collector number OR set code agree with the vision
+ * reading? Used as a refinement *within* the name-matching tier to pick the
+ * right set/number among same-name candidates (e.g. base1-46 vs svp-44
+ * Charmander). Never applied across a name mismatch.
+ */
+export function setOrNumberMatches(
+  cand: Pick<HybridCandidateInput, "number" | "setId">,
+  identity: Pick<CardIdentity, "collectorNumber" | "setCode">,
+): boolean {
+  const candNumber = normalizeCollectorNumber(cand.number);
+  const visionNumber = normalizeCollectorNumber(identity.collectorNumber);
+  if (candNumber && visionNumber && candNumber === visionNumber) return true;
+  const candSet = normalizeSetCode(cand.setId);
+  const visionSet = normalizeSetCode(identity.setCode ?? null);
+  if (candSet && visionSet && candSet === visionSet) return true;
+  return false;
 }
 
 /** Map a raw variant string to the canonical Variant, or null. */
@@ -201,36 +264,60 @@ export function metadataMatchesVision(
 // ── The matcher ─────────────────────────────────────────────────────────────
 
 /**
- * Re-rank embedding candidates using embedding similarity (primary) plus the
- * vision variant/stamp tiebreak (T23.3).
+ * Re-rank embedding candidates with identity FIRST (T26.1) and artwork
+ * similarity second.
  *
- * Returns the re-ranked candidate list (sorted by finalScore desc), a
- * needsConfirmation flag and a human reason. Deterministic and pure.
+ * The embedding similarity is the raw artwork signal; a same-art card from a
+ * different set can score as high as the true card (that is the T26.1 bug). So
+ * we gate on the vision NAME: when the name is usable and at least one
+ * candidate matches it, matching candidates receive IDENTITY_BOOST (plus a
+ * SET_NUMBER_MATCH_BONUS refinement) and are ranked ahead of every non-matching
+ * candidate — artwork similarity then ranks WITHIN the matching tier, where a
+ * stamp/variant tiebreak still resolves same-name prints. When the vision name
+ * is unusable or matches nothing, we fall back to pure art similarity so a
+ * wrong/hallucinated name can never override a strong art match.
+ *
+ * `finalScore` is the internal ranking key and may exceed 1.0 (identity boost
+ * on a near-perfect art match); callers clamp the exposed score to 0..1 for
+ * display. Deterministic and pure.
  */
 export function hybridMatch(
   candidates: HybridCandidateInput[],
   identity: CardIdentity,
   opts: HybridMatchOptions = {},
 ): HybridMatchResult {
-  const nameBonus = opts.nameBonus ?? NAME_MATCH_BONUS;
+  const simWeight = opts.simWeight ?? SIM_WEIGHT;
+  const identityBoost = opts.identityBoost ?? IDENTITY_BOOST;
   const variantBonus = opts.variantBonus ?? VARIANT_MATCH_BONUS;
   const sameArtWindow = opts.sameArtWindow ?? SAME_ART_SIMILARITY_WINDOW;
   const confirmMargin = opts.confirmationMargin ?? CONFIRMATION_FINAL_MARGIN;
 
-  // 1. Base score = embedding similarity (dominant) + small name bonus.
+  // 1. Classify the identity tier per candidate.
   const visionName = normalizeName(identity.name);
-  const scored = candidates.map((c) => {
-    const nameMatched = visionName !== "" && normalizeName(c.name) === visionName;
-    return {
-      candidate: c,
-      finalScore: c.similarity + (nameMatched ? nameBonus : 0),
-      nameMatched,
-      variantMatch: false,
-    };
-  });
+  const nameUsable = visionName !== "";
+  const scored: HybridRankedCandidate[] = candidates.map((c) => ({
+    candidate: c,
+    finalScore: 0,
+    nameMatched: nameUsable && normalizeName(c.name) === visionName,
+    variantMatch: false,
+  }));
 
-  // 2. Rank by final score (similarity dominant, name bonus as a nudge; equal
-  //    final scores fall back to raw similarity so ordering stays stable).
+  // 2. Identity gating only activates when the vision name is usable AND at
+  //    least one candidate matches it. Otherwise trust artwork similarity.
+  const anyMatch = scored.some((r) => r.nameMatched);
+  const gated = nameUsable && anyMatch;
+
+  for (const r of scored) {
+    let s = r.candidate.similarity * (gated ? simWeight : 1);
+    if (gated && r.nameMatched) {
+      s += identityBoost;
+      if (setOrNumberMatches(r.candidate, identity)) s += SET_NUMBER_MATCH_BONUS;
+    }
+    r.finalScore = s;
+  }
+
+  // 3. Rank by finalScore desc (similarity desc tiebreak). With identity baked
+  //    into the score, a name-matching candidate outranks any same-art impostor.
   scored.sort((a, b) => {
     const d = b.finalScore - a.finalScore;
     if (d !== 0) return d;
@@ -243,15 +330,18 @@ export function hybridMatch(
   let tieDetected = false;
 
   if (ranked.length >= 2) {
-    // Same-art tie: the leading run whose similarity sits within the window of
-    // the current #1 (embeddings conflate these variants).
+    // The tie-relevant group is only candidates sharing #1's identity tier and
+    // falling within the same-art similarity window. A down-ranked impostor
+    // (different name) never triggers a variant confirmation against the winner.
+    const topIsMatch = ranked[0].nameMatched;
     const topSim = ranked[0].candidate.similarity;
     const tiedGroup = ranked.filter(
-      (r) => topSim - r.candidate.similarity < sameArtWindow,
+      (r) =>
+        r.nameMatched === topIsMatch &&
+        topSim - r.candidate.similarity < sameArtWindow,
     );
 
     if (tiedGroup.length >= 2) {
-      // Same artwork, ambiguous between variants/stamps.
       const stampVision = visionHasStamp(identity);
       if (stampVision) {
         tieDetected = true;
@@ -282,13 +372,17 @@ export function hybridMatch(
     }
   }
 
-  // 3. Final-margin check: confirm whenever the top-2 FINAL scores are close,
-  //    regardless of whether an explicit tie was seen.
+  // 4. Final-margin check scoped to #1's identity tier: only ambiguity among
+  //    genuinely matching candidates warrants confirmation. A higher-similarity
+  //    impostor in a lower tier does not.
   if (ranked.length >= 2) {
-    const finalGap = ranked[0].finalScore - ranked[1].finalScore;
-    if (finalGap < confirmMargin) {
-      needsConfirmation = true;
-      if (!reason) reason = CLOSE_MATCH_REASON;
+    const topTier = ranked.filter((r) => r.nameMatched === ranked[0].nameMatched);
+    if (topTier.length >= 2) {
+      const gap = topTier[0].finalScore - topTier[1].finalScore;
+      if (gap < confirmMargin) {
+        needsConfirmation = true;
+        if (!reason) reason = CLOSE_MATCH_REASON;
+      }
     }
   }
 
