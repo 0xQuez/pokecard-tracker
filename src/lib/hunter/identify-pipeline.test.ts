@@ -17,6 +17,9 @@ import {
   hardFilterByVisionName,
   hasMultiplePrintVariants,
   enrichPrintVariantHints,
+  priceFinishToHint,
+  enrichCandidatesWithPricing,
+  applyPriceFinishHints,
   VARIANT_CONFIRM_REASON,
   CONFIRMATION_GAP,
   AMBIGUOUS_CANDIDATE_LIMIT,
@@ -331,6 +334,7 @@ test("pipeline (embedding): populated table -> up to 20 candidates, text skipped
 test("pipeline (embedding): svp-44 photo returns svp-44 rank 1 by similarity", async () => {
   const out = await runIdentifyPipeline("https://images.pokemontcg.io/svp/44.png", {
     visionFn: visionReturning(charmanderPlain),
+    fetchPriceFinishes: async () => new Map(),
     embedding: {
       client: {} as never,
       embed: async () => new Float32Array(512),
@@ -352,6 +356,7 @@ test("pipeline (embedding): artwork-misleading — vision attributes correct the
   // reading (name + set + number) must correct the ranking to the true card.
   const out = await runIdentifyPipeline("https://images.pokemontcg.io/det1/4.png", {
     visionFn: visionReturning(charmanderPlain), // name "Charmander", num 44, set SVP
+    fetchPriceFinishes: async () => new Map(),
     embedding: {
       client: {} as never,
       embed: async () => new Float32Array(512),
@@ -786,6 +791,7 @@ test("applyHybridTiebreak: distinct art -> unambiguous single winner", () => {
 test("pipeline (embedding): PC-stamped same-art tie -> confirm + reason surfaced", async () => {
   const out = await runIdentifyPipeline("https://images.pokemontcg.io/svp/44.png", {
     visionFn: visionReturning(charmanderPC),
+    fetchPriceFinishes: async () => new Map(),
     embedding: {
       client: {} as never,
       embed: async () => new Float32Array(512),
@@ -806,6 +812,7 @@ test("pipeline (embedding): PC-stamped same-art tie -> confirm + reason surfaced
 test("pipeline (embedding): clear-cut -> needsConfirmation false, single candidate", async () => {
   const out = await runIdentifyPipeline("https://images.pokemontcg.io/svp/44.png", {
     visionFn: visionReturning(charmanderPlain),
+    fetchPriceFinishes: async () => new Map(),
     embedding: {
       client: {} as never,
       embed: async () => new Float32Array(512),
@@ -1333,4 +1340,214 @@ test("T30 confirmationReason: variant-forced path mentions variants on the pipel
     /variant/i.test(out.confirmationReason ?? ""),
     "reason mentions the print variants",
   );
+});
+
+// ── T30.6 pricing-finish signal 3 ───────────────────────────────────────────
+//
+// T30.6 closes the documented signal-3 gap: a SINGLE catalog row that advertises
+// more than one physical finish via its tcgplayer pricing (e.g. ex13-22 ->
+// ["normal","reverseHolofoil"]) must force confirmation even on a confident
+// single-candidate match. The text path reads the finish keys from the API
+// select; the artwork-embedding path (whose RPC rows carry no pricing) gets them
+// via identify-time pricing enrichment. These tests pin both the pure signal-3
+// logic and the pipeline wiring.
+
+test("T30.6 priceFinishToHint: maps tcgplayer finish keys to picker labels", () => {
+  assert.equal(priceFinishToHint("normal"), "Regular");
+  assert.equal(priceFinishToHint("holofoil"), "Holo");
+  assert.equal(priceFinishToHint("reverseHolofoil"), "Reverse Holo");
+  assert.equal(priceFinishToHint("1stEditionHolofoil"), "1st Edition Holo");
+  // Opaque keys degrade to readable title-case rather than being dropped.
+  assert.equal(priceFinishToHint("fooBarBaz"), "Foo Bar Baz");
+});
+
+test("T30.6 hasMultiplePrintVariants signal 3: single row advertising >1 finish -> true", () => {
+  // ex13-22 Latios δ: one catalog candidate, one vision hint (Regular), but the
+  // catalog's tcgplayer pricing advertises normal + reverseHolofoil finishes.
+  const c = vc("Latios", "ex13-22", ["Regular"], {
+    score: 0.996,
+    set: { id: "ex13", name: "Holon Phantoms" },
+    number: "22",
+  });
+  // Signal 3 fires purely on the priceFinishes key multiplicity.
+  assert.equal(
+    hasMultiplePrintVariants([{ ...c, priceFinishes: ["normal", "reverseHolofoil"] }]),
+    true,
+    "pricing exposing >1 finish forces multiplicity",
+  );
+  // A single advertised finish is NOT multiple prints.
+  assert.equal(
+    hasMultiplePrintVariants([{ ...c, priceFinishes: ["normal"] }]),
+    false,
+  );
+  // No pricing data -> signal 3 is inert (falls through to signals 1 & 2).
+  assert.equal(
+    hasMultiplePrintVariants([{ ...c, priceFinishes: undefined }]),
+    false,
+  );
+});
+
+test("T30.6 decideNeedsConfirmation: pricing-finish multiplicity forces confirmation even at score 0.996", () => {
+  const c: IdentifyCandidate = {
+    id: "ex13-22",
+    name: "Latios",
+    set: { id: "ex13", name: "Holon Phantoms" },
+    number: "22",
+    score: 0.996,
+    variantHints: ["Regular"],
+    priceFinishes: ["normal", "reverseHolofoil"],
+  };
+  // Confident vision reading regular@1.0 (no stamp) still must NOT auto-confirm.
+  assert.equal(decideNeedsConfirmation([c], regularIdentity), true);
+  // And the full list is returned for the user to pick the $250+ reverse tier.
+  assert.equal(trimCandidates([c], true).length, 1);
+  assert.deepEqual(trimCandidates([c], true)[0].priceFinishes, [
+    "normal",
+    "reverseHolofoil",
+  ]);
+});
+
+test("T30.6 enrichCandidatesWithPricing: attaches priceFinishes + derives variant hints", async () => {
+  const fetchFn = async (ids: string[]) =>
+    new Map([["ex13-22", ["normal", "reverseHolofoil"]]]);
+  const out = await enrichCandidatesWithPricing(
+    [vc("Latios", "ex13-22", ["Regular"], { score: 0.996, set: { id: "ex13", name: "Holon Phantoms" }, number: "22" })],
+    fetchFn,
+  );
+  assert.deepEqual(out[0].priceFinishes, ["normal", "reverseHolofoil"]);
+  // The picker now shows both physical finishes (Regular + Reverse Holo).
+  assert.deepEqual(out[0].variantHints, ["Regular", "Reverse Holo"]);
+});
+
+test("T30.6 enrichCandidatesWithPricing: candidates already carrying priceFinishes are untouched", async () => {
+  let called = false;
+  const fetchFn = async () => {
+    called = true;
+    return new Map();
+  };
+  const c = vc("Latios", "ex13-22", ["Regular"]);
+  const withPrices = { ...c, priceFinishes: ["normal", "reverseHolofoil"] };
+  const out = await enrichCandidatesWithPricing([withPrices], fetchFn);
+  assert.equal(called, false, "no fetch needed when pricing already present");
+  assert.equal(out[0], withPrices, "same object returned unchanged");
+});
+
+test("T30.6 enrichCandidatesWithPricing: pricing outage is a no-op, never throws", async () => {
+  const fetchFn = async () => {
+    throw new Error("tcgplayer down");
+  };
+  const c = vc("Latios", "ex13-22", ["Regular"]);
+  const out = await enrichCandidatesWithPricing([c], fetchFn);
+  assert.equal(out[0], c, "input unchanged on pricing outage");
+});
+
+test("T30.6 pipeline (text path): matchCard raw card with tcgplayer prices -> Latios δ reverse-holo forces confirmation", async () => {
+  const raw = {
+    id: "ex13-22",
+    name: "Latios δ",
+    number: "22",
+    set: { id: "ex13", name: "Holon Phantoms", series: "EX" },
+    images: {
+      small: "https://images.pokemontcg.io/ex13/22.png",
+      large: "https://images.pokemontcg.io/ex13/22_hires.png",
+    },
+    tcgplayer: {
+      prices: { normal: {}, reverseHolofoil: {} },
+    },
+  };
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/ex13/22.png", {
+    visionFn: visionReturning(regularIdentity),
+    ...matchReturning([raw]),
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(out.needsConfirmation, true, "single-row multi-finish must force confirmation");
+  assert.equal(out.confirmationReason, VARIANT_CONFIRM_REASON);
+  // The picker advertises the reverse-holo finish reachable at the $250 tier.
+  assert.deepEqual(out.candidates[0].priceFinishes, ["normal", "reverseHolofoil"]);
+  assert.ok(
+    out.candidates[0].variantHints.some((h) => /reverse/i.test(h)),
+    "variantHints include a reverse-holo option",
+  );
+});
+
+test("T30.6 pipeline (embedding path): pricing enrichment makes single-row multi-finish force confirmation", async () => {
+  // The artwork-embedding path's RPC rows carry no pricing, so the pipeline must
+  // enrich them at identify time — the ex13-22 Latios δ row advertises normal +
+  // reverseHolofoil, forcing confirmation despite a confident 0.996 similarity.
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/ex13/22.png", {
+    visionFn: visionReturning(regularIdentity),
+    fetchPriceFinishes: async (ids: string[]) =>
+      new Map([["ex13-22", ["normal", "reverseHolofoil"]]]),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => [
+        embCand({
+          cardId: "ex13-22",
+          name: "Latios",
+          setId: "ex13",
+          setName: "Holon Phantoms",
+          number: "22",
+          similarity: 0.996,
+        }),
+      ],
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(out.needsConfirmation, true, "embedding path enriches pricing -> forces confirmation");
+  assert.equal(out.confirmationReason, VARIANT_CONFIRM_REASON);
+  assert.deepEqual(out.candidates[0].priceFinishes, ["normal", "reverseHolofoil"]);
+  assert.ok(
+    out.candidates[0].variantHints.some((h) => /reverse/i.test(h)),
+    "variantHints include a reverse-holo option",
+  );
+});
+
+test("T30.6 pipeline (embedding path): pricing enrichment absent -> signal 3 stays inert (no regression)", async () => {
+  // When pricing enrichment yields nothing (outage / empty), a confident
+  // single-candidate match still auto-confirms as before — signal 3 must never
+  // force a false positive without data.
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/ex13/22.png", {
+    visionFn: visionReturning(regularIdentity),
+    fetchPriceFinishes: async () => new Map(),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => [
+        embCand({
+          cardId: "ex13-22",
+          name: "Latios",
+          setId: "ex13",
+          setName: "Holon Phantoms",
+          number: "22",
+          similarity: 0.996,
+        }),
+      ],
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(out.needsConfirmation, false, "no pricing -> no signal-3 confirmation");
+});
+
+test("T30.6 pipeline (text path): svp-44 advertises only holofoil -> no spurious signal-3 confirmation", async () => {
+  // svp-44 exposes a single tcgplayer finish (holofoil). Signal 3 must NOT fire
+  // on it; its PC-exclusive picker is driven by the vision stamp path
+  // (hasStampConflict), not by pricing multiplicity. This pins the real API
+  // shape so pricing-driven logic can't over-confirm svp-44.
+  const raw = {
+    ...svp44Raw,
+    tcgplayer: { prices: { holofoil: {} } },
+  };
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/svp/44.png", {
+    visionFn: visionReturning(charmanderPlain),
+    ...matchReturning([raw]),
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  // Single finish + no stamp -> no signal-3 confirmation.
+  assert.equal(out.needsConfirmation, false);
+  assert.deepEqual(out.candidates[0].priceFinishes, ["holofoil"]);
 });

@@ -41,6 +41,7 @@ import {
   matchCard,
   httpGetJson,
   HttpError,
+  fetchPriceFinishes,
   type CandidateCard,
   type MatchOptions,
 } from "./tcg-match.ts";
@@ -79,6 +80,14 @@ export interface IdentifyCandidate {
    * confirmation UI renders these so the user can pick the actual print.
    */
   variantHints: string[];
+  /**
+   * T30.6: physical finish keys the catalog's tcgplayer pricing advertises for
+   * this row (e.g. ["normal","reverseHolofoil"]). The text matcher carries it
+   * from the API select; the embedding path gets it via identify-time pricing
+   * enrichment. Signal 3 of `hasMultiplePrintVariants` reads this so a single
+   * catalog row standing for several finishes forces confirmation.
+   */
+  priceFinishes?: string[];
 }
 
 /** The `extracted` field of the response — what the vision model read. */
@@ -173,6 +182,17 @@ export interface EmbeddingLookupDeps {
   k?: number;
 }
 
+/**
+ * T30.6: identity-time pricing enrichment source. Given candidate card ids,
+ * return each id's tcgplayer finish keys (e.g. ex13-22 -> ["normal",
+ * "reverseHolofoil"]). Defaults to the batched pokemontcg.io query
+ * (`fetchPriceFinishes`); injectable so tests stay offline. Used ONLY on the
+ * artwork-embedding path, whose RPC rows carry no pricing.
+ */
+export type PriceFinishesFn = (
+  ids: string[],
+) => Promise<Map<string, string[]>>;
+
 export interface IdentifyDeps {
   /** Vision call. Defaults to the configured defaultVisionFn. */
   visionFn?: VisionFn;
@@ -185,6 +205,12 @@ export interface IdentifyDeps {
    * empty/unavailable. When omitted, behavior is unchanged (text-only).
    */
   embedding?: EmbeddingLookupDeps;
+  /**
+   * T30.6: pricing-finish enrichment for the artwork-embedding path (whose RPC
+   * rows carry no pricing). Defaults to the batched pokemontcg.io query. Tests
+   * inject a stub so no network is needed. Only read when `embedding` is set.
+   */
+  fetchPriceFinishes?: PriceFinishesFn;
 }
 
 // ── Stamp / variant tiebreaker ───────────────────────────────────────────────
@@ -258,14 +284,12 @@ export function hasStampConflict(identity: Pick<CardIdentity, "stamp">): boolean
  *   2. Two or more candidates share the same name AND collector number but
  *      different set/print metadata — the same card printed in a different
  *      run/set (a reprint across print runs).
- *   3. (GAP — documented, not yet observable) A candidate's pricing payload
- *      advertising more than one finish (normal + reverseHolo + holo). This is
- *      the Latios δ "one catalog row, many finishes" case. The catalog fetch
- *      (tcg-match `select: id,name,number,set,images`) does NOT include
- *      tcgplayer pricing at identify time, so this signal cannot currently be
- *      read; signals 1 & 2 carry the rule until pricing is fetched. When
- *      pricing is available, a candidate whose prices expose more than one
- *      finish key (e.g. both `normal` and `reverseHolo`) MUST return true here.
+ *   3. (T30.6, implemented) A candidate's pricing advertises more than one
+ *      finish key (e.g. both `normal` and `reverseHolofoil`). This is the
+ *      Latios δ "one catalog row, many finishes" case — the row is a single
+ *      card in the catalog but physically exists in several finishes. The text
+ *      path reads it from the API `select` (tcgplayer); the embedding path gets
+ *      it via identify-time pricing enrichment.
  */
 export function hasMultiplePrintVariants(
   candidates: IdentifyCandidate[],
@@ -287,6 +311,12 @@ export function hasMultiplePrintVariants(
     if (!sets) keyToSets.set(key, (sets = new Set()));
     sets.add(c.set?.id || c.set?.name || "");
     if (sets.size > 1) return true;
+  }
+  // Signal 3 (T30.6): a single catalog row advertising >1 physical finish via
+  // its tcgplayer pricing (e.g. ex13-22 -> ["normal","reverseHolofoil"]).
+  for (const c of candidates) {
+    const finishes = new Set(c.priceFinishes ?? []);
+    if (finishes.size > 1) return true;
   }
   return false;
 }
@@ -337,6 +367,7 @@ function toCandidate(card: CandidateCard, identity: CardIdentity): IdentifyCandi
     imageLarge: card.imageLarge,
     score: card.score,
     variantHints: buildVariantHints(identity),
+    priceFinishes: card.priceFinishes,
   };
 }
 
@@ -363,6 +394,85 @@ export function embeddingToCandidate(
     score: ec.similarity,
     variantHints: buildVariantHints(identity),
   };
+}
+
+/**
+ * T30.6: map a tcgplayer price-finish key to a human variant-hint label so the
+ * confirmation picker can render a physical finish the catalog row advertises
+ * via pricing (e.g. `reverseHolofoil` -> "Reverse Holo"). Unknown/opaque keys
+ * are mapped to a readable title-case form rather than dropped.
+ */
+export function priceFinishToHint(key: string): string {
+  const map: Record<string, string> = {
+    normal: "Regular",
+    holofoil: "Holo",
+    reverseHolofoil: "Reverse Holo",
+    "1stEditionHolofoil": "1st Edition Holo",
+    "1stEditionNormal": "1st Edition",
+    "1stEditionReverseHolofoil": "1st Edition Reverse Holo",
+    unlimited: "Unlimited",
+  };
+  if (map[key]) return map[key];
+  // Fall back to a readable title-case of the raw key.
+  return key
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^./, (c) => c.toUpperCase())
+    .trim();
+}
+
+/**
+ * T30.6: pure hint derivation for candidates that ALREADY carry `priceFinishes`
+ * (the text / name-first paths — the API select returns them). Appends a
+ * human-readable variant hint for every advertised finish so the picker shows
+ * all physical options. Never fetches; a candidate with no pricing is returned
+ * unchanged.
+ */
+export function applyPriceFinishHints(
+  candidates: IdentifyCandidate[],
+): IdentifyCandidate[] {
+  return candidates.map((c) => {
+    if (!c.priceFinishes || c.priceFinishes.length === 0) return c;
+    const added = c.priceFinishes
+      .map(priceFinishToHint)
+      .filter((h) => h && h.length > 0);
+    const hints = [...new Set([...(c.variantHints ?? []), ...added])];
+    if (hints.every((h) => (c.variantHints ?? []).includes(h))) return c;
+    return { ...c, variantHints: hints };
+  });
+}
+
+/**
+ * T30.6: attach tcgplayer pricing-finish keys to candidates that lack them
+ * (the artwork-embedding path's RPC rows carry no pricing) and derive a
+ * human-readable variant-hint for each advertised finish so the picker shows
+ * every physical option. Candidates that already carry `priceFinishes` get hint
+ * derivation only. Never throws: a pricing outage returns the input unchanged
+ * so signal 3 just degrades to "no data" — never fails a scan.
+ */
+export async function enrichCandidatesWithPricing(
+  candidates: IdentifyCandidate[],
+  fetchFn: PriceFinishesFn,
+): Promise<IdentifyCandidate[]> {
+  const need = candidates.filter((c) => !c.priceFinishes);
+  let fetched = new Map<string, string[]>();
+  if (need.length > 0) {
+    const ids = [...new Set(need.map((c) => c.id))];
+    try {
+      fetched = await fetchFn(ids);
+    } catch {
+      // Pricing outage — leave candidates as-is; signal 3 degrades to no data.
+      return candidates;
+    }
+  }
+  return candidates.map((c) => {
+    if (!c.priceFinishes) {
+      const keys = fetched.get(c.id) ?? [];
+      const added = keys.map(priceFinishToHint).filter((h) => h && h.length > 0);
+      const hints = [...new Set([...(c.variantHints ?? []), ...added])];
+      return { ...c, priceFinishes: keys, variantHints: hints };
+    }
+    return c;
+  });
 }
 
 /**
@@ -683,11 +793,15 @@ async function nameFirstFallback(
   }
   // T30.1: enrich print hints, then never auto-select when multiple prints exist.
   const enriched = enrichPrintVariantHints(filtered);
-  const variantForced = hasMultiplePrintVariants(enriched);
+  // T30.6: text candidates already carry priceFinishes from the API select —
+  // derive the advertised-finish hints (pure, no fetch) so the picker shows
+  // every physical option.
+  const priced = applyPriceFinishHints(enriched);
+  const variantForced = hasMultiplePrintVariants(priced);
   const needsConfirmation = hybrid.needsConfirmation || variantForced;
   return {
     status: "ok",
-    candidates: trimCandidates(enriched, needsConfirmation),
+    candidates: trimCandidates(priced, needsConfirmation),
     needsConfirmation,
     confirmationReason: variantForced
       ? VARIANT_CONFIRM_REASON
@@ -734,6 +848,13 @@ export async function runIdentifyPipeline(
     return { status: "unreadable", code: "UNREADABLE_IMAGE" };
   }
 
+  // T30.6: pricing-finish source for the identify-time enrichment. Defaults to
+  // the batched pokemontcg.io query, wired to whatever HTTP/matchOptions the
+  // caller supplied so retries/timeouts behave like the matcher.
+  const priceFetcher: PriceFinishesFn =
+    deps.fetchPriceFinishes ??
+    ((ids: string[]) => fetchPriceFinishes(ids, deps.matchOptions));
+
   // 2. Embedding lookup — primary when the table is populated.
   if (deps.embedding) {
     const embeddingCandidates = await runEmbeddingLookup(
@@ -772,11 +893,15 @@ export async function runIdentifyPipeline(
       // T30.1: enrich print hints, then never auto-select a variant when the
       // recognized card has multiple physical prints (the Latios δ regression).
       const enriched = enrichPrintVariantHints(filtered);
-      const variantForced = hasMultiplePrintVariants(enriched);
+      // T30.6: the embedding RPC rows carry no pricing, so fetch finish keys
+      // at identify time and derive picker hints from them. On a pricing
+      // outage this is a no-op and signal 3 just degrades to "no data".
+      const priced = await enrichCandidatesWithPricing(enriched, priceFetcher);
+      const variantForced = hasMultiplePrintVariants(priced);
       const needsConfirmation = hybrid.needsConfirmation || variantForced;
       return {
         status: "ok",
-        candidates: trimCandidates(enriched, needsConfirmation),
+        candidates: trimCandidates(priced, needsConfirmation),
         needsConfirmation,
         confirmationReason: variantForced
           ? VARIANT_CONFIRM_REASON
@@ -811,11 +936,15 @@ export async function runIdentifyPipeline(
   // multiplicity forces it). When variants are why the picker appeared, surface
   // a human reason even though the top score is confident.
   const enriched = enrichPrintVariantHints(candidates);
-  const variantForced = hasMultiplePrintVariants(enriched);
-  const needsConfirmation = decideNeedsConfirmation(enriched, identity);
+  // T30.6: text candidates already carry priceFinishes from the API select —
+  // derive the reverse-holo/other finish hints (pure, no fetch) so the picker
+  // shows every option.
+  const priced = applyPriceFinishHints(enriched);
+  const variantForced = hasMultiplePrintVariants(priced);
+  const needsConfirmation = decideNeedsConfirmation(priced, identity);
   return {
     status: "ok",
-    candidates: trimCandidates(enriched, needsConfirmation),
+    candidates: trimCandidates(priced, needsConfirmation),
     needsConfirmation,
     confirmationReason: variantForced ? VARIANT_CONFIRM_REASON : null,
     extracted: identity,
