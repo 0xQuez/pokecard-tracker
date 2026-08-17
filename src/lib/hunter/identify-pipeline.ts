@@ -137,6 +137,13 @@ export const AMBIGUOUS_CANDIDATE_LIMIT = 20;
 export const CLEAR_CANDIDATE_LIMIT = 1;
 /** Max embedding-similarity candidates the pipeline returns (T23.2). */
 export const EMBEDDING_CANDIDATE_LIMIT = 20;
+/**
+ * Human reason surfaced to the UI when confirmation is forced by physical print
+ * multiplicity (T30.1) — the user must pick the exact version even on a
+ * confident score because the catalog row stands for several distinct prints.
+ */
+export const VARIANT_CONFIRM_REASON =
+  "multiple print variants exist — select the exact version";
 
 // ── Injectable deps ─────────────────────────────────────────────────────────
 
@@ -234,6 +241,88 @@ export function buildVariantHints(
 /** True when the extracted stamp/variant signals a real print-conflict. */
 export function hasStampConflict(identity: Pick<CardIdentity, "stamp">): boolean {
   return stampCategory(identity.stamp) !== null;
+}
+
+// ── T30.1 always-confirm-variant ────────────────────────────────────────────
+
+/**
+ * T30.1: true when the candidate group stands for more than one physical print
+ * of the recognized card, so the UI MUST ask the user to pick the exact version
+ * — never auto-select a variant, even on a confident score. Operates on the
+ * same-name list (T29.1 `hardFilterByVisionName` ran before it). Signals:
+ *
+ *   1. The group carries >1 distinct variant hint — either a single candidate
+ *      advertising several finishes (e.g. ["regular","reverse holo"]) or
+ *      different candidates hinting different prints. Both mean "the user must
+ *      pick".
+ *   2. Two or more candidates share the same name AND collector number but
+ *      different set/print metadata — the same card printed in a different
+ *      run/set (a reprint across print runs).
+ *   3. (GAP — documented, not yet observable) A candidate's pricing payload
+ *      advertising more than one finish (normal + reverseHolo + holo). This is
+ *      the Latios δ "one catalog row, many finishes" case. The catalog fetch
+ *      (tcg-match `select: id,name,number,set,images`) does NOT include
+ *      tcgplayer pricing at identify time, so this signal cannot currently be
+ *      read; signals 1 & 2 carry the rule until pricing is fetched. When
+ *      pricing is available, a candidate whose prices expose more than one
+ *      finish key (e.g. both `normal` and `reverseHolo`) MUST return true here.
+ */
+export function hasMultiplePrintVariants(
+  candidates: IdentifyCandidate[],
+): boolean {
+  if (candidates.length === 0) return false;
+  // Signal 1: distinct finish labels across the group. A single multi-finish
+  // candidate (["regular","reverse holo"]) and candidates hinting different
+  // prints both collapse into >1 distinct hint.
+  const hintSet = new Set<string>();
+  for (const c of candidates) {
+    for (const h of c.variantHints ?? []) hintSet.add(h);
+  }
+  if (hintSet.size > 1) return true;
+  // Signal 2: same name + same collector number across >1 set = a reprint.
+  const keyToSets = new Map<string, Set<string>>();
+  for (const c of candidates) {
+    const key = `${normalizeName(c.name)}|${c.number}`;
+    let sets = keyToSets.get(key);
+    if (!sets) keyToSets.set(key, (sets = new Set()));
+    sets.add(c.set?.id || c.set?.name || "");
+    if (sets.size > 1) return true;
+  }
+  return false;
+}
+
+/**
+ * T30.1: enrich a same-name candidate group so each candidate's `variantHints`
+ * advertises its actual print-run, not just the single vision reading shared by
+ * the whole group. The catalog's per-row print discriminator available at
+ * identify time is the SET: when the same card exists in multiple sets, each
+ * candidate is a distinct physical print and must carry its set so the picker
+ * can render them distinctly. The vision reading stays as the first hint (the
+ * "suggested" print) but is never the only hint once multiple prints exist.
+ * Groups spanning only one set are left untouched (single print run).
+ */
+export function enrichPrintVariantHints(
+  candidates: IdentifyCandidate[],
+): IdentifyCandidate[] {
+  const byName = new Map<string, IdentifyCandidate[]>();
+  for (const c of candidates) {
+    const arr = byName.get(c.name);
+    if (arr) arr.push(c);
+    else byName.set(c.name, [c]);
+  }
+  const multiSetNames = new Set<string>();
+  for (const group of byName.values()) {
+    const sets = new Set(group.map((c) => c.set?.id || c.set?.name || ""));
+    if (sets.size > 1) {
+      for (const c of group) multiSetNames.add(c.name);
+    }
+  }
+  return candidates.map((c) => {
+    if (!multiSetNames.has(c.name)) return c;
+    const printLabel = c.set?.name || c.set?.id || "";
+    if (!printLabel || (c.variantHints ?? []).includes(printLabel)) return c;
+    return { ...c, variantHints: [...(c.variantHints ?? []), printLabel] };
+  });
 }
 
 // ── Candidate assembly ───────────────────────────────────────────────────────
@@ -399,7 +488,9 @@ export function applyHybridTiebreak(
 /**
  * needsConfirmation = true when the top-2 scores are close (< 0.15) OR when the
  * vision model read a pricing-relevant stamp/variant conflict (regular vs
- * Pokemon Center Exclusive / 1st Edition / shadowless).
+ * Pokemon Center Exclusive / 1st Edition / shadowless). T30.1 additionally
+ * forces confirmation whenever the card exists in multiple physical prints —
+ * never auto-select a variant, even on a confident score.
  */
 export function decideNeedsConfirmation(
   candidates: IdentifyCandidate[],
@@ -407,6 +498,8 @@ export function decideNeedsConfirmation(
 ): boolean {
   if (candidates.length === 0) return true;
   if (hasStampConflict(identity)) return true;
+  // T30.1: multiple physical prints of the recognized card -> always confirm.
+  if (hasMultiplePrintVariants(candidates)) return true;
   if (candidates.length >= 2) {
     const gap = candidates[0].score - candidates[1].score;
     if (gap < CONFIRMATION_GAP) return true;
@@ -417,7 +510,10 @@ export function decideNeedsConfirmation(
 /**
  * Pick how many candidates to return: up to AMBIGUOUS_CANDIDATE_LIMIT (20) when
  * ambiguous, exactly 1 when the top match is clearly unambiguous. The UI
- * (T23.4) handles rendering the 20-item ambiguous list.
+ * (T23.4) handles rendering the 20-item ambiguous list. T30.1: the
+ * variant-multiplicity path flows through the `needsConfirmation=true` branch,
+ * so when a card has multiple prints the FULL same-name list (up to 20) is
+ * returned for the user to pick the exact version — never auto-selected to 1.
  */
 export function trimCandidates(
   candidates: IdentifyCandidate[],
@@ -585,11 +681,17 @@ async function nameFirstFallback(
     // We already re-queried by name; no name-matching print exists -> no-match.
     return { status: "no-match", code: "NO_MATCH", extracted: identity };
   }
+  // T30.1: enrich print hints, then never auto-select when multiple prints exist.
+  const enriched = enrichPrintVariantHints(filtered);
+  const variantForced = hasMultiplePrintVariants(enriched);
+  const needsConfirmation = hybrid.needsConfirmation || variantForced;
   return {
     status: "ok",
-    candidates: trimCandidates(filtered, hybrid.needsConfirmation),
-    needsConfirmation: hybrid.needsConfirmation,
-    confirmationReason: hybrid.confirmationReason,
+    candidates: trimCandidates(enriched, needsConfirmation),
+    needsConfirmation,
+    confirmationReason: variantForced
+      ? VARIANT_CONFIRM_REASON
+      : hybrid.confirmationReason,
     extracted: identity,
   };
 }
@@ -667,11 +769,18 @@ export async function runIdentifyPipeline(
         // (the T28.1 path) so every real print of the vision-named card shows.
         return await nameFirstFallback(identity, deps.matchOptions);
       }
+      // T30.1: enrich print hints, then never auto-select a variant when the
+      // recognized card has multiple physical prints (the Latios δ regression).
+      const enriched = enrichPrintVariantHints(filtered);
+      const variantForced = hasMultiplePrintVariants(enriched);
+      const needsConfirmation = hybrid.needsConfirmation || variantForced;
       return {
         status: "ok",
-        candidates: trimCandidates(filtered, hybrid.needsConfirmation),
-        needsConfirmation: hybrid.needsConfirmation,
-        confirmationReason: hybrid.confirmationReason,
+        candidates: trimCandidates(enriched, needsConfirmation),
+        needsConfirmation,
+        confirmationReason: variantForced
+          ? VARIANT_CONFIRM_REASON
+          : hybrid.confirmationReason,
         extracted: identity,
       };
     }
@@ -698,11 +807,17 @@ export async function runIdentifyPipeline(
   if (candidates.length === 0) {
     return { status: "no-match", code: "NO_MATCH", extracted: identity };
   }
-  const needsConfirmation = decideNeedsConfirmation(candidates, identity);
+  // T30.1: enrich print hints per candidate, then decide confirmation (variant
+  // multiplicity forces it). When variants are why the picker appeared, surface
+  // a human reason even though the top score is confident.
+  const enriched = enrichPrintVariantHints(candidates);
+  const variantForced = hasMultiplePrintVariants(enriched);
+  const needsConfirmation = decideNeedsConfirmation(enriched, identity);
   return {
     status: "ok",
-    candidates: trimCandidates(candidates, needsConfirmation),
+    candidates: trimCandidates(enriched, needsConfirmation),
     needsConfirmation,
+    confirmationReason: variantForced ? VARIANT_CONFIRM_REASON : null,
     extracted: identity,
   };
 }
