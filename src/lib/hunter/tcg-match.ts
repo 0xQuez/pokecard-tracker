@@ -38,6 +38,13 @@ export type CandidateCard = {
   number: string;
   imageSmall?: string;
   imageLarge?: string;
+  /**
+   * T30.6: the physical finish keys pokemontcg.io's tcgplayer pricing advertises
+   * for this catalog row (e.g. ["normal","reverseHolofoil"] for the Latios δ
+   * "one row, many finishes" case). Empty when the API returned no pricing.
+   * Signal 3 of `hasMultiplePrintVariants` reads this at identify time.
+   */
+  priceFinishes?: string[];
   /** 0..1 score against the extracted identity. */
   score: number;
 };
@@ -67,6 +74,8 @@ type RawCard = {
   number: string;
   set?: { id: string; name: string; series?: string };
   images?: { small?: string; large?: string };
+  /** T30.6: tcgplayer pricing object; only its top-level finish keys matter. */
+  tcgplayer?: { prices?: Record<string, unknown> };
 };
 
 type RawResponse = { data?: RawCard[]; error?: string };
@@ -308,6 +317,11 @@ function toCandidate(card: RawCard, identity: CardIdentity): CandidateCard {
     number: card.number,
     imageSmall: card.images?.small,
     imageLarge: card.images?.large,
+    // T30.6: carry the tcgplayer finish keys so the pipeline can see a catalog
+    // row that advertises >1 physical finish (signal 3).
+    priceFinishes: card.tcgplayer?.prices
+      ? Object.keys(card.tcgplayer.prices)
+      : undefined,
     score: scoreCandidate(card, identity),
   };
 }
@@ -318,9 +332,45 @@ function buildCardUrl(q: string, pageSize: number): string {
   const params = new URLSearchParams({
     q,
     pageSize: String(pageSize),
-    select: "id,name,number,set,images",
+    // T30.6: include tcgplayer so the anon API returns finish pricing keys
+    // (normal / reverseHolofoil / holofoil) at identify time — the data signal
+    // 3 of hasMultiplePrintVariants needs to drive variant multiplicity.
+    select: "id,name,number,set,images,tcgplayer",
   });
   return `${API_BASE}/cards?${params.toString()}`;
+}
+
+/**
+ * T30.6: fetch tcgplayer finish-price keys for a set of card ids in ONE batched
+ * query (`id:"a" OR id:"b"`), for candidate lists that came from the artwork
+ * embedding path (whose RPC rows carry no pricing). Returns a map of card id ->
+ * finish keys (e.g. ex13-22 -> ["normal","reverseHolofoil"]); ids the API didn't
+ * return are absent. Never throws — a pricing outage degrades signal 3 to "no
+ * data" rather than failing the scan.
+ */
+export async function fetchPriceFinishes(
+  ids: string[],
+  opts: MatchOptions = {},
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  const uniq = [...new Set(ids.filter(Boolean))];
+  if (uniq.length === 0) return out;
+  // id:"a" OR id:"b" — pokemontcg.io's query syntax for an exact-id union.
+  const q = uniq.map((id) => `id:"${id}"`).join(" OR ");
+  const url = buildCardUrl(q, Math.max(uniq.length, 50));
+  try {
+    const body = (await httpGetJson(url, opts)) as RawResponse;
+    for (const card of body?.data ?? []) {
+      if (!card?.id) continue;
+      out.set(
+        card.id,
+        card.tcgplayer?.prices ? Object.keys(card.tcgplayer.prices) : [],
+      );
+    }
+  } catch (e) {
+    opts.logger?.(`tcg-match: price-finish fetch failed: ${(e as Error)?.message}`);
+  }
+  return out;
 }
 
 /**
