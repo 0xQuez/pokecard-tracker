@@ -296,8 +296,10 @@ test("runEmbeddingLookup returns [] when no client (table not configured)", asyn
 // ── runIdentifyPipeline embedding path ──────────────────────────────────────
 
 test("pipeline (embedding): populated table -> up to 20 candidates, text skipped", async () => {
+  // Candidates DO match the vision name, so the T28.1 name-first fallback must
+  // NOT fire — the embedding path is authoritative and returns up to 20.
   const cands = Array.from({ length: 25 }, (_, i) =>
-    embCand({ cardId: `c${i}`, name: `Card ${i}`, number: String(i), similarity: 1 - i * 0.01 }),
+    embCand({ cardId: `c${i}`, name: "Charmander", number: String(i), similarity: 1 - i * 0.01 }),
   );
   const out = await runIdentifyPipeline("https://img/x.png", {
     visionFn: visionReturning(charmanderPlain),
@@ -373,6 +375,55 @@ test("pipeline (embedding): artwork-misleading — vision attributes correct the
   assert.equal(out.confirmationReason, null);
   // Unambiguous -> trimmed to the single clear match (auto-advance path).
   assert.equal(out.candidates.length, CLEAR_CANDIDATE_LIMIT);
+});
+
+test("pipeline (embedding): none match vision name -> name-first re-query returns only matching candidates (T28.1)", async () => {
+  // The top-20 artwork-embedding candidates are ALL Slugma — a similar-art
+  // impostor that dominated the art ranking — and NONE match the vision name
+  // "Onix". T28.1: the pipeline must NOT trust that mismatched artwork; it
+  // re-queries the catalog BY NAME and returns only the Onix prints.
+  let textQueryRan = false;
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/base1/56.png", {
+    visionFn: visionReturning({
+      name: "Onix",
+      setName: "",
+      setCode: null,
+      collectorNumber: "",
+      variant: null,
+      print: null,
+      stamp: null,
+      confidence: 0.85,
+    }),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => [
+        embCand({ cardId: "neo1-61", name: "Slugma", setName: "Neo Genesis", number: "61", similarity: 0.96 }),
+        embCand({ cardId: "neo1-62", name: "Slugma", setName: "Neo Genesis", number: "62", similarity: 0.94 }),
+      ],
+    },
+    matchOptions: {
+      fetchFn: async () => {
+        textQueryRan = true;
+        return {
+          data: [
+            { id: "base1-56", name: "Onix", number: "56", set: { id: "base1", name: "Base Set" }, images: { small: "https://images.pokemontcg.io/base1/56.png" } },
+            { id: "ex-61", name: "Onix", number: "61", set: { id: "ex", name: "Expedition" }, images: { small: "https://images.pokemontcg.io/ex/61.png" } },
+          ],
+        };
+      },
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  // The name query ran, and the result is the Onix prints — never Slugma.
+  assert.equal(textQueryRan, true);
+  assert.ok(out.candidates.length >= 1);
+  assert.ok(out.candidates.every((c) => c.name === "Onix"), "every candidate must be name-matching Onix");
+  assert.equal(out.candidates[0].id, "base1-56");
+  // Multiple same-name prints -> the user must confirm which variant/print.
+  assert.equal(out.needsConfirmation, true);
 });
 
 test("pipeline (embedding): empty table falls back to text matcher", async () => {

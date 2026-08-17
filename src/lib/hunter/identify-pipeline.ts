@@ -52,6 +52,7 @@ import {
 } from "./embedding-lookup.ts";
 import {
   hybridMatch,
+  normalizeName,
   type HybridCandidateInput,
 } from "./hybrid-matcher.ts";
 
@@ -464,6 +465,99 @@ export async function tcgProbeUnhealthy(
   }
 }
 
+// ── T28.1 name-first fallback ───────────────────────────────────────────────
+
+/**
+ * Run the pokemontcg.io text matcher against a matcher-shaped identity and
+ * return either the CandidateCard[] to rank or a terminal IdentifyOutcome
+ * (tcg-down / no-match). Shared by the T22.4 text fallback and the T28.1
+ * name-first path so the 5xx/429/network error handling and the
+ * no-match-vs-API-down probe stay identical in both places.
+ */
+async function textMatchCards(
+  matcherIdentity: import("./tcg-match.ts").CardIdentity,
+  extracted: CardIdentity,
+  matchOptions: MatchOptions | undefined,
+  limit: number,
+): Promise<{ cards: CandidateCard[] } | { outcome: IdentifyOutcome }> {
+  let cards: CandidateCard[];
+  try {
+    cards = await matchCard(matcherIdentity, { ...matchOptions, limit });
+  } catch (e) {
+    const status = e instanceof HttpError ? e.status : 0;
+    // 5xx/429 exhausted retries or network-unknown -> treat as tcg down.
+    if (status >= 500 || status === 429 || status === 0) {
+      const message =
+        e instanceof Error
+          ? `pokemontcg.io unavailable: ${e.message}`
+          : "pokemontcg.io unavailable";
+      return {
+        outcome: { status: "tcg-down", code: "TCG_API_UNAVAILABLE", message },
+      };
+    }
+    throw e; // 4xx other than 429 — unexpected, let route 500 it
+  }
+
+  // No candidates at all. Distinguish "tcg healthy, genuinely no record" from
+  // "tcg down" — matchCard swallows per-query errors, so probe the API.
+  if (cards.length === 0) {
+    const down = await tcgProbeUnhealthy(matchOptions);
+    if (down) {
+      return {
+        outcome: {
+          status: "tcg-down",
+          code: "TCG_API_UNAVAILABLE",
+          message: "pokemontcg.io unavailable",
+        },
+      };
+    }
+    return { outcome: { status: "no-match", code: "NO_MATCH", extracted } };
+  }
+
+  return { cards };
+}
+
+/**
+ * T28.1 name-first fallback: the top-20 artwork-embedding candidates did NOT
+ * include the vision-named card (a similar-art impostor like Slugma dominated).
+ * Instead of trusting that mismatched artwork, re-query the catalog BY NAME so
+ * we recover every real print of the vision-named card (e.g. all Onix), then
+ * rank them through the hybrid matcher — the identity veto now applies because
+ * every candidate matches the name — so the same confirmation/tiebreak logic
+ * drives variant/stamp/print refinement. Only name-matching candidates are ever
+ * presented; a mismatched-name impostor is never surfaced.
+ */
+async function nameFirstFallback(
+  identity: CardIdentity,
+  matchOptions: MatchOptions | undefined,
+): Promise<IdentifyOutcome> {
+  // Query by name ONLY. Pinning the vision set/number here could prune the true
+  // candidates if the vision misread them — the whole point is that artwork
+  // already failed us, so give the user every print of the correct name.
+  const matcherIdentity: import("./tcg-match.ts").CardIdentity = {
+    name: identity.name,
+  };
+  const text = await textMatchCards(
+    matcherIdentity,
+    identity,
+    matchOptions,
+    AMBIGUOUS_CANDIDATE_LIMIT,
+  );
+  if ("outcome" in text) return text.outcome;
+
+  const hybrid = applyHybridTiebreak(
+    text.cards.map((c) => toCandidate(c, identity)),
+    identity,
+  );
+  return {
+    status: "ok",
+    candidates: trimCandidates(hybrid.candidates, hybrid.needsConfirmation),
+    needsConfirmation: hybrid.needsConfirmation,
+    confirmationReason: hybrid.confirmationReason,
+    extracted: identity,
+  };
+}
+
 // ── Main entry ───────────────────────────────────────────────────────────────
 
 /**
@@ -510,6 +604,18 @@ export async function runIdentifyPipeline(
       identity,
     );
     if (embeddingCandidates.length > 0) {
+      // T28.1: when the vision name is usable but NONE of the top-20 embedding
+      // candidates match it, artwork similarity already led us astray (a
+      // similar-art impostor like Slugma dominated the art ranking). Do NOT
+      // fall back to pure artwork similarity — re-query the catalog BY NAME
+      // and present only name-matching candidates.
+      const visionName = normalizeName(identity.name);
+      const anyNameMatch = embeddingCandidates.some(
+        (c) => normalizeName(c.name) === visionName,
+      );
+      if (visionName !== "" && !anyNameMatch) {
+        return await nameFirstFallback(identity, deps.matchOptions);
+      }
       // T23.3: hybrid matcher — embedding similarity (primary) fused with the
       // vision variant/stamp tiebreak. When the vision model reads a pricing
       // stamp on a same-art tie the candidates stay grouped and
@@ -526,39 +632,19 @@ export async function runIdentifyPipeline(
     // Empty/unavailable table → fall through to the text matcher.
   }
 
-  // 3. TCG text matching (fallback).
-  let cards: CandidateCard[];
-  try {
-    cards = await matchCard(toMatcherIdentity(identity), deps.matchOptions);
-  } catch (e) {
-    const status = e instanceof HttpError ? e.status : 0;
-    // 5xx/429 exhausted retries or network-unknown -> treat as tcg down.
-    if (status >= 500 || status === 429 || status === 0) {
-      const message =
-        e instanceof Error
-          ? `pokemontcg.io unavailable: ${e.message}`
-          : "pokemontcg.io unavailable";
-      return { status: "tcg-down", code: "TCG_API_UNAVAILABLE", message };
-    }
-    throw e; // 4xx other than 429 — unexpected, let route 500 it
-  }
+  // 3. TCG text matching (fallback). Shared error/no-match handling so the
+  //    5xx/429/network + no-match-vs-API-down behavior is identical to the
+  //    T28.1 name-first path.
+  const text = await textMatchCards(
+    toMatcherIdentity(identity),
+    identity,
+    deps.matchOptions,
+    /*limit*/ 5,
+  );
+  if ("outcome" in text) return text.outcome;
 
-  // 4. No match at all. Distinguish "tcg healthy, genuinely no record" from
-  //    "tcg down" — matchCard swallows per-query errors, so probe the API.
-  if (cards.length === 0) {
-    const down = await tcgProbeUnhealthy(deps.matchOptions);
-    if (down) {
-      return {
-        status: "tcg-down",
-        code: "TCG_API_UNAVAILABLE",
-        message: "pokemontcg.io unavailable",
-      };
-    }
-    return { status: "no-match", code: "NO_MATCH", extracted: identity };
-  }
-
-  // 5. Stamp/variant tiebreaker + confirmation decision + trimming.
-  const candidates = applyStampTiebreak(cards, identity);
+  // 4. Stamp/variant tiebreaker + confirmation decision + trimming.
+  const candidates = applyStampTiebreak(text.cards, identity);
   const needsConfirmation = decideNeedsConfirmation(candidates, identity);
   return {
     status: "ok",
