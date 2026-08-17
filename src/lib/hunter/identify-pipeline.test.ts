@@ -14,6 +14,7 @@ import {
   buildVariantHints,
   stampCategory,
   hasStampConflict,
+  hardFilterByVisionName,
   CONFIRMATION_GAP,
   AMBIGUOUS_CANDIDATE_LIMIT,
   CLEAR_CANDIDATE_LIMIT,
@@ -833,3 +834,269 @@ function toCard(raw: any, identity: ExtractedIdentity): IdentifyCandidate {
     variantHints: buildVariantHints(identity),
   };
 }
+
+// ── T29 hard name filter ─────────────────────────────────────────────────────
+//
+// T29.1: `hardFilterByVisionName` keeps ONLY candidates whose normalized name
+// EXACTLY equals the normalized vision name. This closes the user-reported
+// Psyduck bug where a scan surfaced 2 Psyduck + Jolteon + "Sabrina's Psyduck" +
+// 16 other cards in the picker. The rule is strict equality AFTER
+// normalizeName() — NOT substring/containment — so "Brock's Onix" and
+// "Sabrina's Psyduck" are deliberately dropped (an apostrophe collapsing to a
+// space does not rescue a possessive card). The tests below pin this rule and
+// prove the impostor scenario can never regress.
+
+/** A plain identity with a given vision name (and no set/number refinement). */
+function idWithName(name: string | null): ExtractedIdentity {
+  return {
+    name: name ?? "",
+    setName: "",
+    setCode: null,
+    collectorNumber: "",
+    variant: null,
+    print: null,
+    stamp: null,
+    confidence: 0.9,
+  };
+}
+
+/** A full-ish vision identity reading a Psyduck. */
+const psyduckIdentity: ExtractedIdentity = idWithName("Psyduck");
+
+/** A bare IdentifyCandidate factory (distinct ids so hybrid matching never dedupes). */
+function cand(name: string, id: string): IdentifyCandidate {
+  return {
+    id,
+    name,
+    set: { id: "base1", name: "Base Set" },
+    number: "1",
+    score: 0.9,
+    variantHints: [],
+  };
+}
+
+test("T29 hardFilterByVisionName: empty vision name -> candidates unchanged (no filter)", () => {
+  const cands = [cand("Psyduck", "p1"), cand("Jolteon", "j1")];
+  assert.equal(hardFilterByVisionName(cands, idWithName("")), cands, "empty name returns the same array");
+  assert.equal(
+    hardFilterByVisionName(cands, { name: null } as unknown as ExtractedIdentity),
+    cands,
+    "null name returns the same array",
+  );
+});
+
+test("T29 hardFilterByVisionName: exact matches only — keeps the 2 Psyducks, drops Jolteon + Sabrina's Psyduck", () => {
+  const out = hardFilterByVisionName(
+    [
+      cand("Psyduck", "p1"),
+      cand("Jolteon", "j1"),
+      cand("Sabrina's Psyduck", "g2-32"),
+      cand("Psyduck", "p2"),
+    ],
+    idWithName("Psyduck"),
+  );
+  assert.equal(out.length, 2);
+  assert.ok(out.every((c) => c.name === "Psyduck"));
+  assert.deepEqual(out.map((c) => c.id).sort(), ["p1", "p2"]);
+});
+
+test("T29 hardFilterByVisionName: case/punct normalization — PSYDUCK matches Psyduck", () => {
+  const out = hardFilterByVisionName([cand("Psyduck", "p1")], idWithName("PSYDUCK"));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].name, "Psyduck");
+});
+
+test("T29 hardFilterByVisionName: Brock's Onix does NOT match vision Onix (T28.2 containment rule)", () => {
+  assert.equal(hardFilterByVisionName([cand("Brock's Onix", "g2-13")], idWithName("Onix")).length, 0);
+});
+
+test("T29 hardFilterByVisionName: Sabrina's Psyduck does NOT match vision Psyduck", () => {
+  assert.equal(hardFilterByVisionName([cand("Sabrina's Psyduck", "g2-32")], idWithName("Psyduck")).length, 0);
+});
+
+test("T29 pipeline: Psyduck impostor scenario — only exact-name Psyducks survive, no name-first fallback, confirmation needed", async () => {
+  // User-reported repro: 2 exact-name Psyduck + Jolteon + Sabrina's Psyduck +
+  // 16 other distinct Pokemon names (20 embedding candidates total).
+  const impostorNames = [
+    "Jolteon",
+    "Sabrina's Psyduck",
+    "Pikachu", "Raichu", "Pidgey", "Rattata", "Meowth", "Mankey",
+    "Growlithe", "Poliwag", "Machop", "Bellsprout", "Tentacool",
+    "Geodude", "Ponyta", "Slowpoke", "Magnemite", "Farfetchd",
+  ]; // 18 impostors (Jolteon + Sabrina's Psyduck + 16 others)
+  const embedding: EmbeddingCandidate[] = [
+    embCand({ cardId: "base1-70", name: "Psyduck", setId: "base1", setName: "Base Set", number: "70", similarity: 0.9 }),
+    embCand({ cardId: "ex2-48", name: "Psyduck", setId: "ex2", setName: "Sandstorm", number: "48", similarity: 0.89 }),
+    ...impostorNames.map((n, i) =>
+      embCand({ cardId: `imp${i}`, name: n, setId: "base1", setName: "Base Set", number: String(i), similarity: 0.99 - i * 0.01 }),
+    ),
+  ];
+  assert.equal(embedding.length, 20, "2 Psyduck + 18 impostor embedding candidates");
+
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/base1/70.png", {
+    visionFn: visionReturning(psyduckIdentity),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => embedding,
+    },
+    matchOptions: {
+      // If the name-first fallback (or any text path) ran, this blows up the test.
+      fetchFn: async () => {
+        throw new Error("name-first fallback must NOT fire when exact Psyducks survive the filter");
+      },
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(out.candidates.length, 2, "only the 2 exact-name Psyducks survive");
+  assert.ok(out.candidates.every((c) => c.name === "Psyduck"), "every candidate is exactly 'Psyduck'");
+  assert.ok(
+    out.candidates.every((c) => c.name !== "Jolteon" && c.name !== "Sabrina's Psyduck"),
+    "neither Jolteon nor Sabrina's Psyduck appears anywhere",
+  );
+  // 2 same-name Psyducks is a variant tie -> the picker must ask which print.
+  assert.equal(out.needsConfirmation, true);
+});
+
+test("T29 pipeline: embedding list has zero exact-Psyduck survivors -> T28.1 name-first fallback returns name-query Psyduck prints", async () => {
+  // Embedding returns 20 candidates ALL with different names (none is Psyduck),
+  // so the name filter (and the T28.1 gate) empties the art list -> re-query by
+  // name and present ONLY the name-matching Psyduck prints.
+  const distinct = [
+    "Pikachu", "Raichu", "Sandshrew", "Nidoran", "Clefairy", "Vulpix",
+    "Jigglypuff", "Zubat", "Oddish", "Paras", "Venonat", "Diglett",
+    "Meowth", "Mankey", "Growlithe", "Poliwag", "Abra", "Machop",
+    "Bellsprout", "Tentacool",
+  ]; // 20 distinct, none "Psyduck"
+  let seenUrl = "";
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/base1/70.png", {
+    visionFn: visionReturning(psyduckIdentity),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () =>
+        distinct.map((n, i) =>
+          embCand({ cardId: `x${i}`, name: n, setId: "base1", setName: "Base Set", number: String(i), similarity: 1 - i * 0.01 }),
+        ),
+    },
+    matchOptions: {
+      fetchFn: async (url: string) => {
+        seenUrl = url;
+        return {
+          data: [
+            { id: "base1-70", name: "Psyduck", number: "70", set: { id: "base1", name: "Base Set" }, images: { small: "https://images.pokemontcg.io/base1/70.png", large: "https://images.pokemontcg.io/base1/70_hires.png" } },
+            { id: "ex2-48", name: "Psyduck", number: "48", set: { id: "ex2", name: "Sandstorm" }, images: { small: "https://images.pokemontcg.io/ex2/48.png", large: "https://images.pokemontcg.io/ex2/48_hires.png" } },
+          ],
+        };
+      },
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.ok(
+    decodeURIComponent(seenUrl).includes('name:"psyduck"'),
+    "name-first fallback must re-query the catalog by name only",
+  );
+  assert.ok(out.candidates.length >= 1);
+  assert.ok(out.candidates.every((c) => c.name === "Psyduck"), "name-query result is only Psyduck prints");
+});
+
+test("T29 pipeline: text path — a Jolteon leaked into the name-query results is hard-filtered out", async () => {
+  // Empty embedding table. Stub the pokemontcg fetch to return a Jolteon among
+  // Psyduck results (simulating a catalog bug or future matcher change). The
+  // T29.1 defensive filter on the text path must drop the Jolteon.
+  const out = await runIdentifyPipeline("https://img/x.png", {
+    visionFn: visionReturning(psyduckIdentity),
+    embedding: { client: {} as never, embed: async () => new Float32Array(512), nearest: async () => [] },
+    matchOptions: {
+      fetchFn: async () => ({
+        data: [
+          { id: "base1-70", name: "Psyduck", number: "70", set: { id: "base1", name: "Base Set" }, images: { small: "https://images.pokemontcg.io/base1/70.png" } },
+          { id: "base1-58", name: "Jolteon", number: "58", set: { id: "base1", name: "Base Set" }, images: { small: "https://images.pokemontcg.io/base1/58.png" } },
+          { id: "ex2-48", name: "Psyduck", number: "48", set: { id: "ex2", name: "Sandstorm" }, images: { small: "https://images.pokemontcg.io/ex2/48.png" } },
+        ],
+      }),
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.ok(out.candidates.length >= 1);
+  assert.ok(
+    out.candidates.every((c) => c.name === "Psyduck"),
+    "final candidates contain ONLY Psyduck — the Jolteon is filtered out",
+  );
+});
+
+test("T29 pipeline: show-more (top-20) — 25 Psyduck prints + 5 interleaved impostors -> exactly 20 Psyducks, zero impostors", async () => {
+  const embedding: EmbeddingCandidate[] = [];
+  for (let i = 0; i < 30; i++) {
+    const isImpostor = i === 3 || i === 8 || i === 13 || i === 18 || i === 23;
+    if (isImpostor) {
+      // Impostors carry HIGHER art similarity so they would rank in the top-20
+      // on artwork alone — the name filter must still strip them.
+      embedding.push(embCand({ cardId: `imp${i}`, name: "Jolteon", setId: "base1", setName: "Base Set", number: String(i), similarity: 0.99 }));
+    } else {
+      embedding.push(embCand({ cardId: `ps${i}`, name: "Psyduck", setId: "base1", setName: "Base Set", number: String(i), similarity: 0.9 - (i % 25) * 0.001 }));
+    }
+  }
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/base1/70.png", {
+    visionFn: visionReturning(psyduckIdentity),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => embedding,
+      k: 30, // let all 30 through so filtering is exercised against impostors inside the top-20 window
+    },
+    matchOptions: {
+      fetchFn: async () => {
+        throw new Error("name query must NOT fire when Psyducks survive the filter");
+      },
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(out.candidates.length, AMBIGUOUS_CANDIDATE_LIMIT, "cap at 20");
+  assert.ok(out.candidates.every((c) => c.name === "Psyduck"), "all 20 are Psyduck");
+  assert.ok(out.candidates.every((c) => c.name !== "Jolteon"), "zero impostors in the top-20");
+});
+
+test("T29 pipeline: unusable (empty) vision name -> candidates pass through unfiltered", async () => {
+  // A collector number is present so the scan is not "unreadable", but the name
+  // is unusable — the artwork-similarity behavior must be preserved unchanged
+  // (no name filter, no name-first fallback).
+  const emptyNameIdentity: ExtractedIdentity = {
+    ...psyduckIdentity,
+    name: "",
+    collectorNumber: "44",
+    confidence: 0.5,
+  };
+  const out = await runIdentifyPipeline("https://img/x.png", {
+    visionFn: visionReturning(emptyNameIdentity),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => [
+        embCand({ cardId: "base1-70", name: "Psyduck", setId: "base1", setName: "Base Set", number: "70", similarity: 0.95 }),
+        embCand({ cardId: "base1-58", name: "Jolteon", setId: "base1", setName: "Base Set", number: "58", similarity: 0.94 }),
+        embCand({ cardId: "gym2-32", name: "Sabrina's Psyduck", setId: "gym2", setName: "Gym Challenge", number: "32", similarity: 0.93 }),
+      ],
+    },
+    matchOptions: {
+      fetchFn: async () => {
+        throw new Error("no name -> must not re-query the catalog");
+      },
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  const names = out.candidates.map((c) => c.name);
+  assert.ok(names.includes("Psyduck"), "Psyduck passes through");
+  assert.ok(names.includes("Jolteon"), "Jolteon passes through (no name filter)");
+  assert.ok(names.includes("Sabrina's Psyduck"), "Sabrina's Psyduck passes through (no name filter)");
+});
