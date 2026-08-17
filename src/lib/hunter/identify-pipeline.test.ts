@@ -15,6 +15,9 @@ import {
   stampCategory,
   hasStampConflict,
   hardFilterByVisionName,
+  hasMultiplePrintVariants,
+  enrichPrintVariantHints,
+  VARIANT_CONFIRM_REASON,
   CONFIRMATION_GAP,
   AMBIGUOUS_CANDIDATE_LIMIT,
   CLEAR_CANDIDATE_LIMIT,
@@ -1099,4 +1102,235 @@ test("T29 pipeline: unusable (empty) vision name -> candidates pass through unfi
   assert.ok(names.includes("Psyduck"), "Psyduck passes through");
   assert.ok(names.includes("Jolteon"), "Jolteon passes through (no name filter)");
   assert.ok(names.includes("Sabrina's Psyduck"), "Sabrina's Psyduck passes through (no name filter)");
+});
+
+// ── T30 always-confirm-variant ───────────────────────────────────────────────
+//
+// T30.1 rule: NEVER auto-select a print variant. When the recognized card
+// stands for more than one physical print (multiple finishes advertised on the
+// same-name candidate(s), or a reprint across sets), the pipeline forces
+// needsConfirmation=true even on a confident score, returns the FULL same-name
+// list (up to 20) instead of trimming to 1, and surfaces VARIANT_CONFIRM_REASON.
+// The money test is the Latios δ "one catalog row, many finishes" regression.
+//
+// NOTE on the pricing signal: the T30.1 implementation documents a gap — the
+// catalog fetch (tcg-match `select`) does NOT include tcgplayer pricing at
+// identify time, so a Latios δ row advertising normal + reverseHolo pricing
+// keys cannot yet be read directly. T30.2 therefore exercises the same rule
+// through the variantHints path (signal 1): a candidate carrying
+// `variantHints: ["regular","reverse holo"]` stands for multiple finishes, and
+// must force confirmation. When pricing is fetched later, that key becomes
+// signal 3 and should route through hasMultiplePrintVariants identically.
+
+/** A candidate factory with explicit variantHints (mirrors IdentifyCandidate). */
+function vc(
+  name: string,
+  id: string,
+  hints: string[],
+  overrides: Partial<IdentifyCandidate> = {},
+): IdentifyCandidate {
+  return {
+    id,
+    name,
+    set: overrides.set ?? { id: "svp", name: "SVP" },
+    number: overrides.number ?? "44",
+    score: overrides.score ?? 0.95,
+    variantHints: hints,
+  };
+}
+
+/** A confident regular-variant vision identity (confidence 1.0, no stamp). */
+const regularIdentity: ExtractedIdentity = {
+  name: "Latios",
+  setName: "",
+  setCode: null,
+  collectorNumber: "",
+  variant: "regular",
+  print: null,
+  stamp: null,
+  confidence: 1.0,
+};
+
+test("T30 money: Latios δ — vision reads regular@1.0, catalog row advertises regular+reverse holo → confirmation forced, full list returned", () => {
+  // The user scans a Latios δ reverse holo. Vision reads variant="regular" with
+  // confidence 1.0, but the same-name catalog candidate advertises BOTH
+  // finishes (signal 1). Never auto-select — ask the user.
+  const candidates = [
+    vc("Latios", "ex8-9", ["regular", "reverse holo"], { score: 0.99, set: { id: "ex8", name: "Delta Species" }, number: "9" }),
+  ];
+  assert.equal(
+    decideNeedsConfirmation(candidates, regularIdentity),
+    true,
+    "multiple finishes force confirmation despite confident regular vision",
+  );
+  assert.deepEqual(
+    trimCandidates(candidates, true),
+    candidates,
+    "variant-forced path returns the full same-name list, not sliced to 1",
+  );
+});
+
+test("T30 money: vision hint is NOT ground truth — confident regular reading never overrides catalog multiplicity", () => {
+  // Core regression: vision says "regular" at confidence 1.0, but the catalog
+  // knows the row has multiple finishes. The vision reading is a HINT, not the
+  // truth — confirmation must be forced anyway.
+  const candidates = [
+    vc("Latios", "ex8-9", ["regular", "reverse holo"], { score: 1.0, set: { id: "ex8", name: "Delta Species" }, number: "9" }),
+    vc("Latios", "ex8-9b", ["regular"], { score: 0.98, set: { id: "ex8", name: "Delta Species" }, number: "9" }),
+  ];
+  // 2 distinct hints across the same-name group (signal 1 multi-candidate).
+  assert.equal(hasMultiplePrintVariants(candidates), true);
+  assert.equal(decideNeedsConfirmation(candidates, regularIdentity), true);
+  assert.equal(
+    trimCandidates(candidates, true).length,
+    2,
+    "both prints returned for the user to pick",
+  );
+});
+
+test("T30 single-print: one candidate, one finish → may auto-confirm, trim to 1", () => {
+  const single = [vc("Latios", "ex8-9", ["Regular"], { score: 0.99 })];
+  assert.equal(hasMultiplePrintVariants(single), false, "single hint, single candidate");
+  // No stamp, no variant multiplicity, and only one candidate → no gap to trip.
+  assert.equal(decideNeedsConfirmation(single, regularIdentity), false);
+  assert.deepEqual(trimCandidates(single, false), single, "clear match trims to exactly 1");
+});
+
+test("T30 svp-44 regression: existing PC-exclusive test still passes unchanged", () => {
+  // The T30.1 rule must not break the pre-existing svp-44 Pokemon-Center path.
+  // A PC-stamped svp-44 keeps needsConfirmation=true AND the
+  // ["regular","Pokemon Center Exclusive"] hints (see the earlier
+  // "pipeline: PC stamp -> needsConfirmation true + variantHints present" test).
+  // Here we pin that a single PC-stamped candidate with TWO finish hints forces
+  // confirmation via multiplicity alone, independent of the stamp check.
+  const pc = [vc("Charmander", "svp-44", ["regular", "Pokemon Center Exclusive"], { score: 0.99 })];
+  assert.equal(hasMultiplePrintVariants(pc), true, "PC row advertises 2 physical prints");
+  assert.equal(decideNeedsConfirmation(pc, { ...regularIdentity, name: "Charmander" }), true);
+});
+
+test("T30 Psyduck same-name multi-print: distinct variants → confirmation forced, all prints returned (up to 20)", () => {
+  const prints = [
+    vc("Psyduck", "base1-70", ["Regular"], { set: { id: "base1", name: "Base Set" }, number: "70" }),
+    vc("Psyduck", "ex2-48", ["Reverse Holo"], { set: { id: "ex2", name: "Sandstorm" }, number: "48" }),
+    vc("Psyduck", "swsh1-33", ["Holo"], { set: { id: "swsh1", name: "Sword & Shield" }, number: "33" }),
+  ];
+  assert.equal(hasMultiplePrintVariants(prints), true, "3 distinct finish hints");
+  assert.equal(decideNeedsConfirmation(prints, idWithName("Psyduck")), true);
+  const trimmed = trimCandidates(prints, true);
+  assert.equal(trimmed.length, 3, "all same-name prints returned");
+  assert.ok(trimmed.length <= AMBIGUOUS_CANDIDATE_LIMIT, "capped at 20");
+});
+
+test("T30 hasMultiplePrintVariants: signal 1 — single candidate advertising multiple finishes", () => {
+  assert.equal(
+    hasMultiplePrintVariants([vc("Latios", "ex8-9", ["regular", "reverse holo"])]),
+    true,
+    "one multi-finish candidate → true",
+  );
+  assert.equal(
+    hasMultiplePrintVariants([vc("Latios", "ex8-9", ["regular"])]),
+    false,
+    "single finish → false",
+  );
+});
+
+test("T30 hasMultiplePrintVariants: signal 1 — multi-candidate distinct hints", () => {
+  const cands = [
+    vc("Psyduck", "base1-70", ["Regular"]),
+    vc("Psyduck", "ex2-48", ["Reverse Holo"]),
+  ];
+  assert.equal(hasMultiplePrintVariants(cands), true);
+  // Same candidate hints repeated across both → NOT multiple prints.
+  const same = [vc("Psyduck", "base1-70", ["Regular"]), vc("Psyduck", "ex2-48", ["Regular"])];
+  assert.equal(hasMultiplePrintVariants(same), false);
+});
+
+test("T30 hasMultiplePrintVariants: signal 2 — same name + same collector number across different sets (reprint)", () => {
+  const reprint = [
+    vc("Latias", "ex8-7", ["Holo"], { set: { id: "ex8", name: "Delta Species" }, number: "7" }),
+    vc("Latias", "pop5-6", ["Holo"], { set: { id: "pop5", name: "POP Series 5" }, number: "7" }),
+  ];
+  assert.equal(hasMultiplePrintVariants(reprint), true, "same card re-printed across sets");
+  // Same name + number in the SAME set → not a reprint, single print.
+  const sameSet = [
+    vc("Latias", "ex8-7", ["Holo"], { set: { id: "ex8", name: "Delta Species" }, number: "7" }),
+    vc("Latias", "ex8-7b", ["Holo"], { set: { id: "ex8", name: "Delta Species" }, number: "7" }),
+  ];
+  assert.equal(hasMultiplePrintVariants(sameSet), false, "same set + number is one print");
+});
+
+test("T30 hasMultiplePrintVariants: signals combined — multi-finish AND reprint both force", () => {
+  const combined = [
+    vc("Latios", "ex8-9", ["regular", "reverse holo"], { set: { id: "ex8", name: "Delta Species" }, number: "9" }),
+    vc("Latios", "pop6-3", ["Holo"], { set: { id: "pop6", name: "POP Series 6" }, number: "9" }),
+  ];
+  assert.equal(hasMultiplePrintVariants(combined), true);
+  // Removes duplicate hints, still >1 distinct hint.
+  assert.equal(
+    hasMultiplePrintVariants([
+      vc("Latios", "ex8-9", ["regular", "reverse holo"]),
+      vc("Latios", "ex8-9b", ["regular", "reverse holo"]),
+    ]),
+    true,
+    "both candidates share 2 hints → 2 distinct finishes still force",
+  );
+});
+
+test("T30 hasMultiplePrintVariants: empty and single-variant cases return false", () => {
+  assert.equal(hasMultiplePrintVariants([]), false, "empty list");
+  assert.equal(hasMultiplePrintVariants([vc("Latios", "ex8-9", ["Regular"])]), false, "one finish");
+  assert.equal(
+    hasMultiplePrintVariants([vc("Latios", "ex8-9", [])]),
+    false,
+    "one candidate with no hints",
+  );
+});
+
+test("T30 enrichPrintVariantHints: multi-set same-name group gets per-print set labels", () => {
+  const cands = [
+    vc("Psyduck", "base1-70", ["Regular"], { set: { id: "base1", name: "Base Set" }, number: "70" }),
+    vc("Psyduck", "ex2-48", ["Regular"], { set: { id: "ex2", name: "Sandstorm" }, number: "48" }),
+  ];
+  const enriched = enrichPrintVariantHints(cands);
+  assert.ok(enriched[0].variantHints.includes("Base Set"), "set label appended");
+  assert.ok(enriched[1].variantHints.includes("Sandstorm"), "set label appended");
+  // Single-set group is left untouched.
+  const singleSet = [
+    vc("Latios", "ex8-9", ["Regular"], { set: { id: "ex8", name: "Delta Species" }, number: "9" }),
+    vc("Latios", "ex8-9b", ["Reverse Holo"], { set: { id: "ex8", name: "Delta Species" }, number: "9" }),
+  ];
+  const untouched = enrichPrintVariantHints(singleSet);
+  assert.deepEqual(untouched, singleSet, "one set → no enrichment");
+});
+
+test("T30 confirmationReason: variant-forced path mentions variants on the pipeline", async () => {
+  // Embedding path: two same-name Psyduck prints from different sets. After
+  // enrichPrintVariantHints they advertise distinct set labels → variant-forced,
+  // so confirmationReason must be VARIANT_CONFIRM_REASON (mentions 'variant').
+  const out = await runIdentifyPipeline("https://images.pokemontcg.io/base1/70.png", {
+    visionFn: visionReturning(idWithName("Psyduck")),
+    embedding: {
+      client: {} as never,
+      embed: async () => new Float32Array(512),
+      nearest: async () => [
+        embCand({ cardId: "base1-70", name: "Psyduck", setId: "base1", setName: "Base Set", number: "70", similarity: 0.95 }),
+        embCand({ cardId: "ex2-48", name: "Psyduck", setId: "ex2", setName: "Sandstorm", number: "48", similarity: 0.94 }),
+      ],
+    },
+    matchOptions: {
+      fetchFn: async () => {
+        throw new Error("name query must NOT fire when Psyducks survive the filter");
+      },
+      logger: () => {},
+    },
+  });
+  assert.equal(out.status, "ok");
+  if (out.status !== "ok") return;
+  assert.equal(out.needsConfirmation, true, "multi-set Psyduck group forces confirmation");
+  assert.equal(out.candidates.length, 2, "both prints returned for the user to pick");
+  assert.equal(out.confirmationReason, VARIANT_CONFIRM_REASON);
+  assert.ok(
+    /variant/i.test(out.confirmationReason ?? ""),
+    "reason mentions the print variants",
+  );
 });
