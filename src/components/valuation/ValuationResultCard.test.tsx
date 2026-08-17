@@ -197,4 +197,51 @@ describe("ValuationResultCard", () => {
     expect(await screen.findByTestId("regenerate-ok")).toHaveTextContent(/new link created/i);
     expect(regenerateShare).toHaveBeenCalledWith(9);
   });
+
+  it("polls and surfaces the result when realtime never fires (guest anon)", async () => {
+    const running = request("running");
+    const done = request("done");
+    // config is read at query time, so mutating it simulates the worker finishing
+    // in the DB while the client never receives a realtime UPDATE.
+    const config = { request: running, result: null as ValuationResultRow | null };
+    const cap: RealtimeCapture = { update: null, channelName: null, removedChannels: [], requestFetches: 0 };
+    const client = makeRealtimeClient(config, cap);
+
+    render(<ValuationResultCard valuationId={9} client={client} pollIntervalMs={20} />);
+
+    // Initially running — no curve yet.
+    expect(await screen.findByTestId("valuation-status")).toHaveAttribute("data-status", "running");
+    expect(screen.queryByText("$850.00")).toBeNull();
+    const fetchAfterMount = cap.requestFetches;
+
+    // Worker finishes; realtime channel is dead (no UPDATE ever fires).
+    config.request = done;
+    config.result = result();
+
+    // The poll (every 20ms) re-reads the row and flips to done without refresh.
+    expect(await screen.findByText(/Dragonite ex/i)).toBeTruthy();
+    expect(screen.getByTestId("valuation-status")).toHaveAttribute("data-status", "done");
+    expect(cap.requestFetches).toBeGreaterThan(fetchAfterMount);
+  });
+
+  it("stops polling once the request reaches done", async () => {
+    const running = request("running");
+    const done = request("done");
+    const config = { request: running, result: null as ValuationResultRow | null };
+    const cap: RealtimeCapture = { update: null, channelName: null, removedChannels: [], requestFetches: 0 };
+    const client = makeRealtimeClient(config, cap);
+
+    render(<ValuationResultCard valuationId={9} client={client} pollIntervalMs={10} />);
+    await screen.findByTestId("valuation-status");
+
+    config.request = done;
+    config.result = result();
+    await screen.findByText(/Dragonite ex/i); // poll picks it up
+    const fetchAfterDone = cap.requestFetches;
+
+    // Several poll cycles of wall-clock time elapse; the interval was cleared so
+    // no further request reads happen.
+    await new Promise((r) => setTimeout(r, 60));
+    expect(cap.requestFetches).toBe(fetchAfterDone);
+  });
 });

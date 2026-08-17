@@ -26,6 +26,13 @@ export interface ValuationResultCardProps {
   onReRun?: () => void;
   /** Injectable token rotation (tests). Defaults to the real server route call. */
   regenerateShare?: (resultId: number) => Promise<RegenerateShareOutcome>;
+  /**
+   * Fallback poll interval while the request is in-flight (pending/claimed/
+   * running). Realtime is the fast path; this poll is the safety net for guest
+   * anon clients where the UPDATE broadcast can be dropped. Stops once the
+   * request reaches a terminal state (done/failed/blocked) or on unmount.
+   */
+  pollIntervalMs?: number;
 }
 
 interface Loaded {
@@ -45,6 +52,7 @@ export default function ValuationResultCard({
   client = supabase,
   onReRun,
   regenerateShare,
+  pollIntervalMs = 12000,
 }: ValuationResultCardProps) {
   const [state, setState] = useState<Loaded>({
     request: null,
@@ -54,23 +62,15 @@ export default function ValuationResultCard({
 
   useEffect(() => {
     let cancelled = false;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-    const fetchRequest = async () => {
-      const { data, error } = await client
-        .from("valuation_requests")
-        .select("*")
-        .eq("id", valuationId)
-        .maybeSingle();
-      if (cancelled) return;
-      if (error) {
-        setState((s) => ({ ...s, error: error.message }));
-        return;
-      }
-      if (data) {
-        setState((s) => ({ ...s, request: data as ValuationRequestRow }));
-        if ((data as ValuationRequestRow).status === "done") {
-          await fetchResult();
-        }
+    const isTerminal = (status: ValuationStatus | null): boolean =>
+      status === "done" || status === "failed" || status === "blocked";
+
+    const stopPolling = () => {
+      if (pollTimer !== null) {
+        clearInterval(pollTimer);
+        pollTimer = null;
       }
     };
 
@@ -88,7 +88,44 @@ export default function ValuationResultCard({
       setState((s) => ({ ...s, result: (data as ValuationResultRow) ?? null }));
     };
 
+    const fetchRequest = async () => {
+      const { data, error } = await client
+        .from("valuation_requests")
+        .select("*")
+        .eq("id", valuationId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        setState((s) => ({ ...s, error: error.message }));
+        stopPolling();
+        return;
+      }
+      if (data) {
+        const row = data as ValuationRequestRow;
+        setState((s) => ({ ...s, request: row }));
+        if (row.status === "done") {
+          await fetchResult();
+        }
+        if (isTerminal(row.status)) {
+          stopPolling();
+        }
+      }
+    };
+
     fetchRequest();
+
+    // Fallback poll: while the request is still in-flight, re-read it every
+    // pollIntervalMs. Realtime is the fast path, but guest/anon clients can miss
+    // the UPDATE broadcast (RLS / publication quirks); polling guarantees the
+    // result appears without a user refresh. The poll stops once the request
+    // reaches a terminal state or on unmount.
+    const startPolling = () => {
+      if (pollTimer !== null) return;
+      pollTimer = setInterval(() => {
+        fetchRequest();
+      }, pollIntervalMs);
+    };
+    startPolling();
 
     // Realtime: live-update on request-row changes (pending → claimed → running →
     // done). When the row flips to 'done' we pull the result that was written.
@@ -105,16 +142,22 @@ export default function ValuationResultCard({
         (payload: { new: ValuationRequestRow }) => {
           const row = payload.new;
           setState((s) => ({ ...s, request: row }));
-          if (row.status === "done") fetchResult();
+          if (row.status === "done") {
+            fetchResult();
+            stopPolling();
+          } else if (isTerminal(row.status)) {
+            stopPolling();
+          }
         }
       )
       .subscribe();
 
     return () => {
       cancelled = true;
+      stopPolling();
       client.removeChannel(channel);
     };
-  }, [valuationId, client]);
+  }, [valuationId, client, pollIntervalMs]);
 
   if (state.error) {
     return (

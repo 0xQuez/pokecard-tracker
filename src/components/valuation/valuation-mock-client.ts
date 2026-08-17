@@ -13,6 +13,8 @@ export interface RealtimeCapture {
   update: ((payload: { new: ValuationRequestRow }) => void) | null;
   channelName: string | null;
   removedChannels: string[];
+  /** Count of valuation_requests row reads (mount + each poll tick). */
+  requestFetches: number;
 }
 
 export interface MockClientConfig {
@@ -37,6 +39,7 @@ export function makeRealtimeClient(
     update: null,
     channelName: null,
     removedChannels: [],
+    requestFetches: 0,
   }
 ): SupabaseClientLike {
   return {
@@ -48,6 +51,7 @@ export function makeRealtimeClient(
               return q;
             },
             maybeSingle() {
+              if (table === "valuation_requests") capture.requestFetches += 1;
               const data =
                 table === "valuation_requests" ? config.request : config.result;
               return Promise.resolve({ data, error: null });
