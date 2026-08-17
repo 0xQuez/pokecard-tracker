@@ -427,6 +427,34 @@ export function trimCandidates(
   return candidates.slice(0, AMBIGUOUS_CANDIDATE_LIMIT);
 }
 
+// ── T29.1 hard name filter ────────────────────────────────────────────────────
+
+/**
+ * T29.1: hard-filter the candidate list so it contains ONLY cards whose
+ * normalized name EXACTLY equals the normalized vision name. This closes the
+ * Psyduck-scan bug where mismatched-name cards (Jolteon, "Sabrina's Psyduck",
+ * "Brock's Onix", …) filled the picker alongside the 2 true Psyduck prints.
+ *
+ * The rule is EXACT equality after normalizeName() — NOT substring/containment.
+ * An apostrophe normalized away does not rescue a possessive card:
+ * `sabrina s psyduck` !== `psyduck`, and `brock s onix` !== `onix`, so both are
+ * deliberately dropped. When the vision name is empty/unusable, the filter is a
+ * no-op (returns candidates unchanged) so the artwork/text ranking stands.
+ *
+ * This filter is the strict superset of the T28.2 containment rule: anything
+ * that passed that rule (exact name) also passes here, and it additionally
+ * strips same-tier impostors that the hybrid matcher's identity veto only
+ * down-ranks but never removes.
+ */
+export function hardFilterByVisionName(
+  candidates: IdentifyCandidate[],
+  identity: CardIdentity,
+): IdentifyCandidate[] {
+  const vn = normalizeName(identity.name);
+  if (vn === "") return candidates;
+  return candidates.filter((c) => normalizeName(c.name) === vn);
+}
+
 // ── TCG health probe ──────────────────────────────────────────────────────────
 
 /**
@@ -549,9 +577,17 @@ async function nameFirstFallback(
     text.cards.map((c) => toCandidate(c, identity)),
     identity,
   );
+  // Defensive (T29.1): matchCard already queries by exact name, but hard-filter
+  // the re-ranked list anyway — belt-and-braces so a mismatched-name card can
+  // never leak out of the name-first path.
+  const filtered = hardFilterByVisionName(hybrid.candidates, identity);
+  if (filtered.length === 0) {
+    // We already re-queried by name; no name-matching print exists -> no-match.
+    return { status: "no-match", code: "NO_MATCH", extracted: identity };
+  }
   return {
     status: "ok",
-    candidates: trimCandidates(hybrid.candidates, hybrid.needsConfirmation),
+    candidates: trimCandidates(filtered, hybrid.needsConfirmation),
     needsConfirmation: hybrid.needsConfirmation,
     confirmationReason: hybrid.confirmationReason,
     extracted: identity,
@@ -621,9 +657,19 @@ export async function runIdentifyPipeline(
       // stamp on a same-art tie the candidates stay grouped and
       // needsConfirmation is set; otherwise an unambiguous top match trims to 1.
       const hybrid = applyHybridTiebreak(embeddingCandidates, identity);
+      // T29.1: hard-filter by vision name AFTER the hybrid rank so ONLY exact
+      // same-name cards survive (Psyduck prints stay; Jolteon / Sabrina's
+      // Psyduck / other names are dropped). needsConfirmation is preserved so
+      // the picker remains a same-name variant/print refinement.
+      const filtered = hardFilterByVisionName(hybrid.candidates, identity);
+      if (filtered.length === 0 && normalizeName(identity.name) !== "") {
+        // No candidate survived the name filter — re-query the catalog BY NAME
+        // (the T28.1 path) so every real print of the vision-named card shows.
+        return await nameFirstFallback(identity, deps.matchOptions);
+      }
       return {
         status: "ok",
-        candidates: trimCandidates(hybrid.candidates, hybrid.needsConfirmation),
+        candidates: trimCandidates(filtered, hybrid.needsConfirmation),
         needsConfirmation: hybrid.needsConfirmation,
         confirmationReason: hybrid.confirmationReason,
         extracted: identity,
@@ -643,8 +689,15 @@ export async function runIdentifyPipeline(
   );
   if ("outcome" in text) return text.outcome;
 
-  // 4. Stamp/variant tiebreaker + confirmation decision + trimming.
-  const candidates = applyStampTiebreak(text.cards, identity);
+  // 4. Stamp/variant tiebreaker + T29.1 hard name filter + confirmation
+  //    decision + trimming. The filter is applied defensively (matchCard already
+  //    queried by name). If it leaves 0 candidates we ARE the name query — a
+  //    no-match outcome, NOT a name-first re-query.
+  const stampCandidates = applyStampTiebreak(text.cards, identity);
+  const candidates = hardFilterByVisionName(stampCandidates, identity);
+  if (candidates.length === 0) {
+    return { status: "no-match", code: "NO_MATCH", extracted: identity };
+  }
   const needsConfirmation = decideNeedsConfirmation(candidates, identity);
   return {
     status: "ok",
